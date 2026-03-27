@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::column::{Column, ColumnId};
 use crate::row::Row;
+use crate::undo::{UndoAction, UndoStack};
 use crate::value::Value;
 
 /// Unique identifier for a sheet.
@@ -64,6 +65,12 @@ pub struct Sheet {
 
     /// Number of key columns (leftmost N columns are keys).
     pub num_keys: usize,
+
+    /// Whether the sheet has been modified since load/save.
+    pub modified: bool,
+
+    /// Undo stack for reversible mutations.
+    pub undo_stack: UndoStack,
 }
 
 /// Global sheet ID counter.
@@ -89,6 +96,8 @@ impl Sheet {
             source: None,
             sort_keys: Vec::new(),
             num_keys: 0,
+            modified: false,
+            undo_stack: UndoStack::new(),
         }
     }
 
@@ -380,6 +389,120 @@ impl Sheet {
             .collect();
 
         Self::with_data(format!("{}_freq", col.name), columns, rows)
+    }
+
+    // --- Editing ---
+
+    /// Set a cell value and record the old value on the undo stack.
+    pub fn set_cell(&mut self, row_idx: usize, col_source_idx: usize, value: Value) {
+        let Some(row) = self.rows.get_mut(row_idx) else {
+            return;
+        };
+        let old_value = row.get(col_source_idx).clone();
+        row.set(col_source_idx, value);
+        self.modified = true;
+        self.undo_stack.push(UndoAction::SetCell {
+            row_idx,
+            col_source_idx,
+            old_value,
+        });
+    }
+
+    /// Insert an empty row at the given index and record it for undo.
+    pub fn insert_row_at(&mut self, row_idx: usize) {
+        let num_values = self.columns.len();
+        let row = Row::new(vec![Value::Null; num_values]);
+        let idx = row_idx.min(self.rows.len());
+        self.rows.insert(idx, row);
+        self.modified = true;
+        self.undo_stack.push(UndoAction::InsertRow { row_idx: idx });
+    }
+
+    /// Delete the row at the given index and record it for undo.
+    ///
+    /// Returns the deleted row, or `None` if the index is out of bounds.
+    pub fn delete_row_at(&mut self, row_idx: usize) -> Option<Row> {
+        if row_idx >= self.rows.len() {
+            return None;
+        }
+        let row = self.rows.remove(row_idx);
+        self.modified = true;
+        self.undo_stack.push(UndoAction::DeleteRow {
+            row_idx,
+            row: row.clone(),
+        });
+        self.clamp_cursor();
+        Some(row)
+    }
+
+    /// Delete all selected rows and record them for undo.
+    ///
+    /// Returns the number of deleted rows.
+    pub fn delete_selected_rows(&mut self) -> usize {
+        let mut entries: Vec<(usize, Row)> = Vec::new();
+        // Collect indices in reverse order so removals don't shift later indices.
+        let indices: Vec<usize> = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.selected)
+            .map(|(i, _)| i)
+            .collect();
+
+        for &idx in indices.iter().rev() {
+            let row = self.rows.remove(idx);
+            entries.push((idx, row));
+        }
+
+        let count = entries.len();
+        if count > 0 {
+            self.modified = true;
+            self.undo_stack.push(UndoAction::DeleteRows { entries });
+            self.clamp_cursor();
+        }
+        count
+    }
+
+    /// Undo the last mutation, returning `true` if an action was undone.
+    pub fn undo(&mut self) -> bool {
+        let Some(action) = self.undo_stack.pop() else {
+            return false;
+        };
+
+        match action {
+            UndoAction::SetCell {
+                row_idx,
+                col_source_idx,
+                old_value,
+            } => {
+                if let Some(row) = self.rows.get_mut(row_idx) {
+                    row.set(col_source_idx, old_value);
+                }
+            }
+            UndoAction::InsertRow { row_idx } => {
+                if row_idx < self.rows.len() {
+                    self.rows.remove(row_idx);
+                }
+            }
+            UndoAction::DeleteRow { row_idx, row } => {
+                let idx = row_idx.min(self.rows.len());
+                self.rows.insert(idx, row);
+            }
+            UndoAction::DeleteRows { entries } => {
+                // Re-insert in forward order (entries stored in reverse).
+                for (idx, row) in entries.into_iter().rev() {
+                    let insert_at = idx.min(self.rows.len());
+                    self.rows.insert(insert_at, row);
+                }
+            }
+        }
+
+        self.clamp_cursor();
+        // If undo stack is empty, sheet may no longer be modified.
+        if self.undo_stack.is_empty() {
+            self.modified = false;
+        }
+        true
     }
 }
 
@@ -785,5 +908,110 @@ mod tests {
         let sheet = Sheet::new("empty");
         let freq = sheet.frequency_sheet(0);
         assert_eq!(freq.num_rows(), 0);
+    }
+
+    // --- Editing tests ---
+
+    #[test]
+    fn set_cell_and_undo() {
+        let mut sheet = sample_sheet();
+        assert!(!sheet.modified);
+
+        sheet.set_cell(0, 0, Value::Text("Zara".into()));
+        assert_eq!(sheet.get_cell(0, 0), Value::Text("Zara".into()));
+        assert!(sheet.modified);
+
+        // Undo should restore original value
+        assert!(sheet.undo());
+        assert_eq!(sheet.get_cell(0, 0), Value::Text("Alice".into()));
+        assert!(!sheet.modified);
+    }
+
+    #[test]
+    fn insert_row_and_undo() {
+        let mut sheet = sample_sheet();
+        assert_eq!(sheet.num_rows(), 3);
+
+        sheet.insert_row_at(1);
+        assert_eq!(sheet.num_rows(), 4);
+        assert_eq!(sheet.get_cell(1, 0), Value::Null); // new empty row
+        assert_eq!(sheet.get_cell(2, 0), Value::Text("Bob".into())); // shifted
+        assert!(sheet.modified);
+
+        assert!(sheet.undo());
+        assert_eq!(sheet.num_rows(), 3);
+        assert_eq!(sheet.get_cell(1, 0), Value::Text("Bob".into()));
+    }
+
+    #[test]
+    fn insert_row_at_end() {
+        let mut sheet = sample_sheet();
+        sheet.insert_row_at(100); // beyond bounds
+        assert_eq!(sheet.num_rows(), 4);
+        assert_eq!(sheet.get_cell(3, 0), Value::Null);
+    }
+
+    #[test]
+    fn delete_row_and_undo() {
+        let mut sheet = sample_sheet();
+        let deleted = sheet.delete_row_at(1);
+        assert!(deleted.is_some());
+        assert_eq!(sheet.num_rows(), 2);
+        assert_eq!(sheet.get_cell(0, 0), Value::Text("Alice".into()));
+        assert_eq!(sheet.get_cell(1, 0), Value::Text("Carol".into()));
+
+        assert!(sheet.undo());
+        assert_eq!(sheet.num_rows(), 3);
+        assert_eq!(sheet.get_cell(1, 0), Value::Text("Bob".into()));
+    }
+
+    #[test]
+    fn delete_row_out_of_bounds() {
+        let mut sheet = sample_sheet();
+        assert!(sheet.delete_row_at(99).is_none());
+        assert!(!sheet.modified);
+    }
+
+    #[test]
+    fn delete_selected_rows_and_undo() {
+        let mut sheet = sample_sheet();
+        sheet.rows[0].selected = true;
+        sheet.rows[2].selected = true;
+
+        let count = sheet.delete_selected_rows();
+        assert_eq!(count, 2);
+        assert_eq!(sheet.num_rows(), 1);
+        assert_eq!(sheet.get_cell(0, 0), Value::Text("Bob".into()));
+
+        assert!(sheet.undo());
+        assert_eq!(sheet.num_rows(), 3);
+    }
+
+    #[test]
+    fn delete_selected_rows_none() {
+        let mut sheet = sample_sheet();
+        let count = sheet.delete_selected_rows();
+        assert_eq!(count, 0);
+        assert!(!sheet.modified);
+    }
+
+    #[test]
+    fn undo_empty_stack() {
+        let mut sheet = sample_sheet();
+        assert!(!sheet.undo());
+    }
+
+    #[test]
+    fn multiple_undos() {
+        let mut sheet = sample_sheet();
+        sheet.set_cell(0, 0, Value::Text("X".into()));
+        sheet.set_cell(0, 0, Value::Text("Y".into()));
+        assert_eq!(sheet.get_cell(0, 0), Value::Text("Y".into()));
+
+        sheet.undo();
+        assert_eq!(sheet.get_cell(0, 0), Value::Text("X".into()));
+
+        sheet.undo();
+        assert_eq!(sheet.get_cell(0, 0), Value::Text("Alice".into()));
     }
 }

@@ -234,6 +234,18 @@ pub fn builtin_commands() -> CommandRegistry {
     reg.add("S", "sheets-sheet", "show all open sheets");
     reg.add("O", "options-sheet", "show all options");
 
+    // Editing
+    reg.add("e", "edit-cell", "edit current cell");
+    reg.add("a", "add-row", "insert empty row above cursor");
+    reg.add("d", "delete-row", "delete current row");
+    reg.add("gd", "delete-selected", "delete all selected rows");
+
+    // Undo
+    reg.add("", "undo", "undo last edit (Ctrl+Z)");
+
+    // Save
+    reg.add("", "save-sheet", "save sheet to source file (Ctrl+S)");
+
     // Help
     reg.add("", "help-commands", "show all commands");
 

@@ -27,6 +27,8 @@ enum InputMode {
     Normal,
     /// Renaming the current column.
     RenameColumn(LineEditor),
+    /// Editing a cell value.
+    EditCell(LineEditor),
     /// Forward search in current column.
     SearchForward(LineEditor),
     /// Backward search in current column.
@@ -115,6 +117,7 @@ impl App {
                 match &self.mode {
                     InputMode::Normal => self.handle_normal_key(key),
                     InputMode::RenameColumn(_)
+                    | InputMode::EditCell(_)
                     | InputMode::SearchForward(_)
                     | InputMode::SearchBackward(_)
                     | InputMode::CommandPalette(_) => self.handle_input_key(key),
@@ -134,6 +137,7 @@ impl App {
                 InputMode::RenameColumn(editor) => {
                     Some(format!("rename column: {}", editor.text()))
                 }
+                InputMode::EditCell(editor) => Some(format!("edit: {}", editor.text())),
                 InputMode::SearchForward(editor) => Some(format!("/{}", editor.text())),
                 InputMode::SearchBackward(editor) => Some(format!("?{}", editor.text())),
                 InputMode::CommandPalette(editor) => {
@@ -166,6 +170,25 @@ impl App {
         // Ctrl-C always quits
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.running = false;
+            return;
+        }
+
+        // Ctrl+Z = undo
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('z') {
+            if let Some(sheet) = self.stack.active_mut() {
+                if sheet.undo() {
+                    self.status = "undone".into();
+                } else {
+                    self.status = "nothing to undo".into();
+                }
+            }
+            self.update_status();
+            return;
+        }
+
+        // Ctrl+S = save
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
+            self.save_current_sheet();
             return;
         }
 
@@ -203,6 +226,33 @@ impl App {
             KeyCode::End => {
                 if !sheet.rows.is_empty() {
                     sheet.cursor_row = sheet.rows.len() - 1;
+                }
+            }
+
+            // --- Editing ---
+
+            // Edit current cell
+            KeyCode::Char('e') => {
+                if !sheet.rows.is_empty() {
+                    let vis = sheet.visible_columns();
+                    if let Some(&col) = vis.get(sheet.cursor_col) {
+                        let current_display = col.display_value(&sheet.rows[sheet.cursor_row]);
+                        let editor = LineEditor::new(&current_display);
+                        self.mode = InputMode::EditCell(editor);
+                        return;
+                    }
+                }
+            }
+
+            // Add row above cursor
+            KeyCode::Char('a') => {
+                sheet.insert_row_at(sheet.cursor_row);
+            }
+
+            // Delete current row
+            KeyCode::Char('d') => {
+                if !sheet.rows.is_empty() {
+                    sheet.delete_row_at(sheet.cursor_row);
                 }
             }
 
@@ -386,6 +436,25 @@ impl App {
                     }
                 }
             }
+            InputMode::EditCell(mut editor) => match editor.handle_key(&key_str) {
+                EditResult::Accept(new_value) => {
+                    if let Some(sheet) = self.stack.active_mut() {
+                        let vis = sheet.visible_columns();
+                        if let Some(&col) = vis.get(sheet.cursor_col) {
+                            let col_source_idx = col.source_idx;
+                            let value = visidata_core::Value::Text(new_value);
+                            sheet.set_cell(sheet.cursor_row, col_source_idx, value);
+                        }
+                    }
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Cancel => {
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Continue => {
+                    self.mode = InputMode::EditCell(editor);
+                }
+            },
             InputMode::SearchForward(mut editor) => match editor.handle_key(&key_str) {
                 EditResult::Accept(pattern) => {
                     self.last_search = Some(pattern.clone());
@@ -567,6 +636,46 @@ impl App {
                     }
                 }
             }
+            "edit-cell" => {
+                if let Some(s) = self.stack.active()
+                    && !s.rows.is_empty()
+                {
+                    let vis = s.visible_columns();
+                    if let Some(&col) = vis.get(s.cursor_col) {
+                        let display = col.display_value(&s.rows[s.cursor_row]);
+                        self.mode = InputMode::EditCell(LineEditor::new(&display));
+                    }
+                }
+            }
+            "add-row" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let idx = s.cursor_row;
+                    s.insert_row_at(idx);
+                }
+            }
+            "delete-row" => {
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                {
+                    s.delete_row_at(s.cursor_row);
+                }
+            }
+            "delete-selected" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let count = s.delete_selected_rows();
+                    self.status = format!("deleted {count} rows");
+                }
+            }
+            "undo" => {
+                if let Some(s) = self.stack.active_mut() {
+                    if s.undo() {
+                        self.status = "undone".into();
+                    } else {
+                        self.status = "nothing to undo".into();
+                    }
+                }
+            }
+            "save-sheet" => self.save_current_sheet(),
             _ => {
                 self.status = format!("unknown command: {longname}");
             }
@@ -622,8 +731,11 @@ impl App {
                 .current_column()
                 .map_or("", |col| col.col_type.indicator());
 
+            // Modified indicator
+            let mod_indicator = if sheet.modified { " [+]" } else { "" };
+
             self.status = format!(
-                "{} | {}r x {}c | row {} col {} {type_indicator}{}",
+                "{}{mod_indicator} | {}r x {}c | row {} col {} {type_indicator}{}",
                 sheet.name,
                 sheet.num_rows(),
                 sheet.visible_columns().len(),
@@ -631,6 +743,30 @@ impl App {
                 sheet.cursor_col + 1,
                 sel_text,
             );
+        }
+    }
+
+    /// Save the current sheet to its source file.
+    fn save_current_sheet(&mut self) {
+        let Some(sheet) = self.stack.active() else {
+            return;
+        };
+        let Some(path) = sheet.source.clone() else {
+            self.status = "no source file to save to".into();
+            return;
+        };
+        match visidata_loaders::save_sheet(sheet, &path) {
+            Ok(()) => {
+                self.status = format!("saved to {}", path.display());
+                // Mark as no longer modified
+                if let Some(sheet) = self.stack.active_mut() {
+                    sheet.modified = false;
+                    sheet.undo_stack.clear();
+                }
+            }
+            Err(e) => {
+                self.status = format!("save failed: {e}");
+            }
         }
     }
 }

@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 visidata-core = { workspace = true }
+visidata-loaders = { workspace = true }
 visidata-scripting = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }

@@ -5,6 +5,7 @@ mod html_loader;
 mod json_loader;
 mod parquet_loader;
 mod registry;
+mod saver;
 mod sqlite_loader;
 mod yaml_loader;
 
@@ -15,6 +16,7 @@ pub use html_loader::{HtmlLoader, load_html_from_str};
 pub use json_loader::{JsonLoader, load_json_from_str, load_jsonl_from_str};
 pub use parquet_loader::ParquetLoader;
 pub use registry::{Loader, LoaderRegistry};
+pub use saver::save_sheet;
 pub use sqlite_loader::{SqliteLoader, load_table};
 pub use visidata_core;
 pub use yaml_loader::{YamlLoader, load_yaml_from_str};

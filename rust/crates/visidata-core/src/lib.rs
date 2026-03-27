@@ -8,6 +8,7 @@ mod sheet;
 mod sheet_stack;
 pub mod sheets;
 pub mod typeinfer;
+pub mod undo;
 mod value;
 
 pub use column::{Column, ColumnId, ColumnType};
