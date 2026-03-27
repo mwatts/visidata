@@ -1,4 +1,3 @@
-mod value;
 mod column;
 pub mod commands;
 pub mod config;
@@ -9,6 +8,7 @@ mod sheet;
 mod sheet_stack;
 pub mod sheets;
 pub mod typeinfer;
+mod value;
 
 pub use column::{Column, ColumnId, ColumnType};
 pub use commands::{CommandInfo, CommandRegistry, KeystrokeOutcome, builtin_commands};

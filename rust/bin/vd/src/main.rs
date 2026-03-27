@@ -47,18 +47,20 @@ fn main() -> Result<()> {
 
     // Load config file if it exists
     if let Some(config_path) = visidata_core::config::default_config_path()
-        && let Ok(config) = visidata_core::config::load_config(&config_path) {
-            visidata_core::config::apply_config(&config, &mut app.options);
-            // Apply keybinding overrides
-            for (keystroke, longname) in &config.keybindings {
-                app.commands.add(keystroke, longname, "user-defined");
-            }
+        && let Ok(config) = visidata_core::config::load_config(&config_path)
+    {
+        visidata_core::config::apply_config(&config, &mut app.options);
+        // Apply keybinding overrides
+        for (keystroke, longname) in &config.keybindings {
+            app.commands.add(keystroke, longname, "user-defined");
         }
+    }
 
     // Apply CLI option overrides (highest priority)
     for opt_str in &cli.options {
         if let Some((name, val)) = opt_str.split_once('=') {
-            app.options.set_global(name, visidata_core::Value::Text(val.to_owned()));
+            app.options
+                .set_global(name, visidata_core::Value::Text(val.to_owned()));
         }
     }
 
@@ -87,21 +89,111 @@ fn demo_sheet() -> Sheet {
     ];
 
     let data: Vec<Vec<Value>> = vec![
-        vec!["Alice".into(), 30_i64.into(), "New York".into(), Value::Float(85000.0), true.into()],
-        vec!["Bob".into(), 25_i64.into(), "San Francisco".into(), Value::Float(92000.0), true.into()],
-        vec!["Carol".into(), 35_i64.into(), "Chicago".into(), Value::Float(78000.0), false.into()],
-        vec!["Dave".into(), 28_i64.into(), "Boston".into(), Value::Float(71000.0), true.into()],
-        vec!["Eve".into(), 42_i64.into(), "Seattle".into(), Value::Float(105_000.0), true.into()],
-        vec!["Frank".into(), 31_i64.into(), "Austin".into(), Value::Float(68000.0), false.into()],
-        vec!["Grace".into(), 29_i64.into(), "Denver".into(), Value::Float(73000.0), true.into()],
-        vec!["Hank".into(), 38_i64.into(), "Portland".into(), Value::Float(88000.0), true.into()],
-        vec!["Ivy".into(), 26_i64.into(), "Miami".into(), Value::Float(65000.0), false.into()],
-        vec!["Jack".into(), 45_i64.into(), "Atlanta".into(), Value::Float(110_000.0), true.into()],
-        vec!["Karen".into(), 33_i64.into(), "Minneapolis".into(), Value::Float(79000.0), true.into()],
-        vec!["Leo".into(), 27_i64.into(), "Nashville".into(), Value::Float(62000.0), false.into()],
-        vec!["Mona".into(), 39_i64.into(), "Phoenix".into(), Value::Float(95000.0), true.into()],
-        vec!["Nick".into(), 24_i64.into(), "Detroit".into(), Value::Float(58000.0), true.into()],
-        vec!["Olivia".into(), 36_i64.into(), "San Diego".into(), Value::Float(87000.0), false.into()],
+        vec![
+            "Alice".into(),
+            30_i64.into(),
+            "New York".into(),
+            Value::Float(85000.0),
+            true.into(),
+        ],
+        vec![
+            "Bob".into(),
+            25_i64.into(),
+            "San Francisco".into(),
+            Value::Float(92000.0),
+            true.into(),
+        ],
+        vec![
+            "Carol".into(),
+            35_i64.into(),
+            "Chicago".into(),
+            Value::Float(78000.0),
+            false.into(),
+        ],
+        vec![
+            "Dave".into(),
+            28_i64.into(),
+            "Boston".into(),
+            Value::Float(71000.0),
+            true.into(),
+        ],
+        vec![
+            "Eve".into(),
+            42_i64.into(),
+            "Seattle".into(),
+            Value::Float(105_000.0),
+            true.into(),
+        ],
+        vec![
+            "Frank".into(),
+            31_i64.into(),
+            "Austin".into(),
+            Value::Float(68000.0),
+            false.into(),
+        ],
+        vec![
+            "Grace".into(),
+            29_i64.into(),
+            "Denver".into(),
+            Value::Float(73000.0),
+            true.into(),
+        ],
+        vec![
+            "Hank".into(),
+            38_i64.into(),
+            "Portland".into(),
+            Value::Float(88000.0),
+            true.into(),
+        ],
+        vec![
+            "Ivy".into(),
+            26_i64.into(),
+            "Miami".into(),
+            Value::Float(65000.0),
+            false.into(),
+        ],
+        vec![
+            "Jack".into(),
+            45_i64.into(),
+            "Atlanta".into(),
+            Value::Float(110_000.0),
+            true.into(),
+        ],
+        vec![
+            "Karen".into(),
+            33_i64.into(),
+            "Minneapolis".into(),
+            Value::Float(79000.0),
+            true.into(),
+        ],
+        vec![
+            "Leo".into(),
+            27_i64.into(),
+            "Nashville".into(),
+            Value::Float(62000.0),
+            false.into(),
+        ],
+        vec![
+            "Mona".into(),
+            39_i64.into(),
+            "Phoenix".into(),
+            Value::Float(95000.0),
+            true.into(),
+        ],
+        vec![
+            "Nick".into(),
+            24_i64.into(),
+            "Detroit".into(),
+            Value::Float(58000.0),
+            true.into(),
+        ],
+        vec![
+            "Olivia".into(),
+            36_i64.into(),
+            "San Diego".into(),
+            Value::Float(87000.0),
+            false.into(),
+        ],
     ];
 
     let rows: Vec<Row> = data.into_iter().map(Row::new).collect();

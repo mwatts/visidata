@@ -50,7 +50,10 @@ pub struct Theme {
 
 /// Context flags for resolving a cell's style.
 #[derive(Debug, Clone, Copy, Default)]
-#[expect(clippy::struct_excessive_bools, reason = "flags are independent display properties")]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "flags are independent display properties"
+)]
 pub struct CellContext {
     /// This is the cursor cell (active).
     pub is_cursor_cell: bool,
@@ -102,7 +105,11 @@ impl Theme {
             name: "dark".into(),
 
             header: Style::new().bold().fg(Color::Black).bg(Color::Blue),
-            header_key: Style::new().bold().underlined().fg(Color::Black).bg(Color::Blue),
+            header_key: Style::new()
+                .bold()
+                .underlined()
+                .fg(Color::Black)
+                .bg(Color::Blue),
             header_cursor: Style::new().bold().fg(Color::Black).bg(Color::Cyan),
 
             cell_default: Style::new().fg(Color::White),
@@ -128,7 +135,11 @@ impl Theme {
             name: "light".into(),
 
             header: Style::new().bold().fg(Color::White).bg(Color::DarkGray),
-            header_key: Style::new().bold().underlined().fg(Color::White).bg(Color::DarkGray),
+            header_key: Style::new()
+                .bold()
+                .underlined()
+                .fg(Color::White)
+                .bg(Color::DarkGray),
             header_cursor: Style::new().bold().reversed(),
 
             cell_default: Style::new().fg(Color::Black),
@@ -243,49 +254,67 @@ mod tests {
     #[test]
     fn cell_style_priority_cursor() {
         let theme = Theme::default_theme();
-        let c = ctx(|c| { c.is_cursor_cell = true; c.is_cursor_row = true; c.is_selected = true; c.is_key_col = true; });
+        let c = ctx(|c| {
+            c.is_cursor_cell = true;
+            c.is_cursor_row = true;
+            c.is_selected = true;
+            c.is_key_col = true;
+        });
         assert_eq!(theme.cell_style(&c), theme.cell_cursor);
     }
 
     #[test]
     fn cell_style_priority_cursor_row() {
         let theme = Theme::default_theme();
-        let c = ctx(|c| { c.is_cursor_row = true; c.is_selected = true; });
+        let c = ctx(|c| {
+            c.is_cursor_row = true;
+            c.is_selected = true;
+        });
         assert_eq!(theme.cell_style(&c), theme.row_cursor);
     }
 
     #[test]
     fn cell_style_priority_selected() {
         let theme = Theme::default_theme();
-        let c = ctx(|c| { c.is_selected = true; });
+        let c = ctx(|c| {
+            c.is_selected = true;
+        });
         assert_eq!(theme.cell_style(&c), theme.row_selected);
     }
 
     #[test]
     fn cell_style_error() {
         let theme = Theme::default_theme();
-        let c = ctx(|c| { c.is_error = true; });
+        let c = ctx(|c| {
+            c.is_error = true;
+        });
         assert_eq!(theme.cell_style(&c), theme.cell_error);
     }
 
     #[test]
     fn cell_style_null() {
         let theme = Theme::default_theme();
-        let c = ctx(|c| { c.is_null = true; });
+        let c = ctx(|c| {
+            c.is_null = true;
+        });
         assert_eq!(theme.cell_style(&c), theme.cell_null);
     }
 
     #[test]
     fn cell_style_key_col() {
         let theme = Theme::default_theme();
-        let c = ctx(|c| { c.is_key_col = true; });
+        let c = ctx(|c| {
+            c.is_key_col = true;
+        });
         assert_eq!(theme.cell_style(&c), theme.col_key);
     }
 
     #[test]
     fn cell_style_numeric() {
         let theme = Theme::default_theme();
-        let c = ctx(|c| { c.is_numeric = true; });
+        let c = ctx(|c| {
+            c.is_numeric = true;
+        });
         assert_eq!(theme.cell_style(&c), theme.cell_numeric);
     }
 

@@ -56,7 +56,10 @@ pub fn columns_sheet(source: &Sheet) -> Sheet {
 /// Shows: column name, type, nulls count, distinct count, min, max,
 /// mean, median, stdev (for numeric columns).
 #[must_use]
-#[expect(clippy::cast_precision_loss, reason = "acceptable for statistical summary")]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "acceptable for statistical summary"
+)]
 pub fn describe_sheet(source: &Sheet) -> Sheet {
     let columns = vec![
         Column::new(ColumnId(0), "column", 0),
@@ -124,7 +127,11 @@ pub fn describe_sheet(source: &Sheet) -> Sheet {
             } else {
                 let n = numeric_vals.len() as f64;
                 let mean_f = numeric_vals.iter().sum::<f64>() / n;
-                let variance = numeric_vals.iter().map(|v| (v - mean_f).powi(2)).sum::<f64>() / (n - 1.0);
+                let variance = numeric_vals
+                    .iter()
+                    .map(|v| (v - mean_f).powi(2))
+                    .sum::<f64>()
+                    / (n - 1.0);
                 Value::Float(variance.sqrt())
             };
 
@@ -155,10 +162,7 @@ pub fn describe_sheet(source: &Sheet) -> Sheet {
 ///
 /// Returns an error if the directory cannot be read.
 pub fn dir_sheet(path: &Path) -> Result<Sheet, String> {
-    let dir_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(".");
+    let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or(".");
 
     let columns = vec![
         Column::new(ColumnId(0), "name", 0),
@@ -177,7 +181,9 @@ pub fn dir_sheet(path: &Path) -> Result<Sheet, String> {
 
         let metadata = entry.metadata().ok();
         #[expect(clippy::cast_possible_wrap, reason = "file sizes won't exceed i64")]
-        let size = metadata.as_ref().map_or(Value::Null, |m| Value::Int(m.len() as i64));
+        let size = metadata
+            .as_ref()
+            .map_or(Value::Null, |m| Value::Int(m.len() as i64));
 
         let file_type = if entry.path().is_dir() {
             "dir"
@@ -244,10 +250,7 @@ pub fn text_sheet_from_file(path: &Path) -> Result<Sheet, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
 
-    let name = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("text");
+    let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("text");
 
     let mut sheet = text_sheet(name, &content);
     sheet.source = Some(path.to_path_buf());
@@ -267,7 +270,10 @@ pub fn sheets_sheet(sheets: &[&Sheet]) -> Sheet {
         Column::new(ColumnId(4), "source", 4),
     ];
 
-    #[expect(clippy::cast_possible_wrap, reason = "sheet dimensions won't overflow i64")]
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "sheet dimensions won't overflow i64"
+    )]
     let rows: Vec<Row> = sheets
         .iter()
         .map(|s| {
@@ -302,10 +308,26 @@ mod tests {
         columns[2].col_type = ColumnType::Float;
 
         let rows = vec![
-            Row::new(vec![Value::Text("Alice".into()), Value::Int(30), Value::Float(85.5)]),
-            Row::new(vec![Value::Text("Bob".into()), Value::Int(25), Value::Float(92.0)]),
-            Row::new(vec![Value::Text("Carol".into()), Value::Int(35), Value::Null]),
-            Row::new(vec![Value::Text("Dave".into()), Value::Int(25), Value::Float(78.0)]),
+            Row::new(vec![
+                Value::Text("Alice".into()),
+                Value::Int(30),
+                Value::Float(85.5),
+            ]),
+            Row::new(vec![
+                Value::Text("Bob".into()),
+                Value::Int(25),
+                Value::Float(92.0),
+            ]),
+            Row::new(vec![
+                Value::Text("Carol".into()),
+                Value::Int(35),
+                Value::Null,
+            ]),
+            Row::new(vec![
+                Value::Text("Dave".into()),
+                Value::Int(25),
+                Value::Float(78.0),
+            ]),
         ];
         Sheet::with_data("test", columns, rows)
     }

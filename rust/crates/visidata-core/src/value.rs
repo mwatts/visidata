@@ -33,7 +33,10 @@ impl Value {
 
     /// Returns the value as an `i64`, performing type coercion where possible.
     #[must_use]
-    #[expect(clippy::cast_possible_truncation, reason = "intentional coercion from f64 to i64")]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "intentional coercion from f64 to i64"
+    )]
     pub fn as_int(&self) -> Option<i64> {
         match self {
             Self::Int(n) => Some(*n),
@@ -46,7 +49,10 @@ impl Value {
 
     /// Returns the value as an `f64`, performing type coercion where possible.
     #[must_use]
-    #[expect(clippy::cast_precision_loss, reason = "acceptable precision loss for i64 to f64 coercion")]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "acceptable precision loss for i64 to f64 coercion"
+    )]
     pub fn as_float(&self) -> Option<f64> {
         match self {
             Self::Float(f) => Some(*f),
@@ -98,7 +104,10 @@ impl fmt::Display for Value {
 }
 
 impl PartialOrd for Value {
-    #[expect(clippy::cast_precision_loss, reason = "acceptable for mixed int/float comparison")]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "acceptable for mixed int/float comparison"
+    )]
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         match (self, other) {
             (Self::Null, Self::Null) => Some(std::cmp::Ordering::Equal),
@@ -245,12 +254,12 @@ mod tests {
     fn ordering_incomparable_types() {
         // Different type families are incomparable (returns None)
         assert_eq!(Value::Int(1).partial_cmp(&Value::Text("1".into())), None);
-        assert_eq!(Value::Text("a".into()).partial_cmp(&Value::Bool(true)), None);
-        assert_eq!(Value::Int(1).partial_cmp(&Value::Bool(true)), None);
         assert_eq!(
-            Value::Error("x".into()).partial_cmp(&Value::Int(1)),
+            Value::Text("a".into()).partial_cmp(&Value::Bool(true)),
             None
         );
+        assert_eq!(Value::Int(1).partial_cmp(&Value::Bool(true)), None);
+        assert_eq!(Value::Error("x".into()).partial_cmp(&Value::Int(1)), None);
     }
 
     #[test]
@@ -263,10 +272,8 @@ mod tests {
 
     #[test]
     fn ordering_date() {
-        let d1 = NaiveDateTime::parse_from_str("2020-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")
-            .unwrap();
-        let d2 = NaiveDateTime::parse_from_str("2021-06-15 12:00:00", "%Y-%m-%d %H:%M:%S")
-            .unwrap();
+        let d1 = NaiveDateTime::parse_from_str("2020-01-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let d2 = NaiveDateTime::parse_from_str("2021-06-15 12:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
         assert!(Value::Date(d1) < Value::Date(d2));
         assert_eq!(
             Value::Date(d1).partial_cmp(&Value::Date(d1)),
@@ -276,8 +283,7 @@ mod tests {
 
     #[test]
     fn display_date() {
-        let d =
-            NaiveDateTime::parse_from_str("2021-07-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let d = NaiveDateTime::parse_from_str("2021-07-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
         let display = Value::Date(d).to_string();
         assert!(display.contains("2021"));
         assert!(display.contains("07"));
@@ -304,7 +310,10 @@ mod tests {
         assert_eq!(Value::from(-1_i64), Value::Int(-1));
         assert_eq!(Value::from(3.14_f64), Value::Float(3.14));
         assert_eq!(Value::from("hello"), Value::Text("hello".into()));
-        assert_eq!(Value::from(String::from("owned")), Value::Text("owned".into()));
+        assert_eq!(
+            Value::from(String::from("owned")),
+            Value::Text("owned".into())
+        );
         assert_eq!(Value::from(true), Value::Bool(true));
         assert_eq!(Value::from(false), Value::Bool(false));
         assert_eq!(Value::from(None::<&str>), Value::Null);

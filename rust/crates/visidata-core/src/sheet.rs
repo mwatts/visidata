@@ -67,8 +67,7 @@ pub struct Sheet {
 }
 
 /// Global sheet ID counter.
-static NEXT_SHEET_ID: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(1);
+static NEXT_SHEET_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 fn next_sheet_id() -> SheetId {
     SheetId(NEXT_SHEET_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
@@ -95,11 +94,7 @@ impl Sheet {
 
     /// Create a sheet from columns and rows.
     #[must_use]
-    pub fn with_data(
-        name: impl Into<String>,
-        columns: Vec<Column>,
-        rows: Vec<Row>,
-    ) -> Self {
+    pub fn with_data(name: impl Into<String>, columns: Vec<Column>, rows: Vec<Row>) -> Self {
         Self {
             columns,
             rows,
@@ -301,12 +296,7 @@ impl Sheet {
     /// Returns the selected rows as a new filtered sheet.
     #[must_use]
     pub fn selected_rows_sheet(&self) -> Self {
-        let selected_rows: Vec<Row> = self
-            .rows
-            .iter()
-            .filter(|r| r.selected)
-            .cloned()
-            .collect();
+        let selected_rows: Vec<Row> = self.rows.iter().filter(|r| r.selected).cloned().collect();
         let mut sheet = Self::with_data(
             format!("{}_selected", self.name),
             self.columns.clone(),
@@ -381,7 +371,10 @@ impl Sheet {
         let rows: Vec<Row> = counts
             .into_iter()
             .map(|(val, count)| {
-                #[expect(clippy::cast_possible_wrap, reason = "row counts won't exceed i64::MAX")]
+                #[expect(
+                    clippy::cast_possible_wrap,
+                    reason = "row counts won't exceed i64::MAX"
+                )]
                 Row::new(vec![Value::Text(val), Value::Int(count as i64)])
             })
             .collect();
@@ -763,9 +756,7 @@ mod tests {
     #[test]
     fn frequency_sheet_basic() {
         // Create sheet with repeated values
-        let columns = vec![
-            Column::new(ColumnId(0), "color", 0),
-        ];
+        let columns = vec![Column::new(ColumnId(0), "color", 0)];
         let rows = vec![
             Row::new(vec![Value::Text("red".into())]),
             Row::new(vec![Value::Text("blue".into())]),

@@ -25,7 +25,7 @@ pub fn infer_column_type(values: &[&Value], max_sample: usize) -> ColumnType {
 
     for val in &sample {
         match val {
-            Value::Null => {},
+            Value::Null => {}
             Value::Int(_) => {
                 int_count += 1;
                 non_null += 1;
@@ -162,10 +162,7 @@ mod tests {
 
     #[test]
     fn infer_text_fallback() {
-        let vals = vec![
-            Value::Text("hello".into()),
-            Value::Text("world".into()),
-        ];
+        let vals = vec![Value::Text("hello".into()), Value::Text("world".into())];
         let refs: Vec<&Value> = vals.iter().collect();
         assert_eq!(infer_column_type(&refs, 100), ColumnType::Text);
     }
@@ -270,11 +267,10 @@ mod tests {
     #[test]
     fn parse_custom_date_comparison() {
         // From Python test_date.py: date(2021,7,1) <= customdate('28092021')
-        let threshold =
-            chrono::NaiveDate::from_ymd_opt(2021, 7, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap();
+        let threshold = chrono::NaiveDate::from_ymd_opt(2021, 7, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
 
         let d1 = parse_custom_date("22092017", "%d%m%Y").unwrap();
         let d2 = parse_custom_date("28092021", "%d%m%Y").unwrap();

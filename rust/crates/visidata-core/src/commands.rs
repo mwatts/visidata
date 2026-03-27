@@ -46,12 +46,7 @@ impl CommandRegistry {
     }
 
     /// Register a command.
-    pub fn add(
-        &mut self,
-        keystrokes: &str,
-        longname: &str,
-        help: &str,
-    ) {
+    pub fn add(&mut self, keystrokes: &str, longname: &str, help: &str) {
         let info = CommandInfo {
             longname: longname.to_owned(),
             keystrokes: keystrokes.to_owned(),
@@ -60,7 +55,8 @@ impl CommandRegistry {
         };
         self.commands.insert(longname.to_owned(), info);
         if !keystrokes.is_empty() {
-            self.bindings.insert(keystrokes.to_owned(), longname.to_owned());
+            self.bindings
+                .insert(keystrokes.to_owned(), longname.to_owned());
         }
     }
 
@@ -220,7 +216,11 @@ pub fn builtin_commands() -> CommandRegistry {
 
     // Search
     reg.add("/", "search-col", "search forward in current column");
-    reg.add("?", "search-col-backward", "search backward in current column");
+    reg.add(
+        "?",
+        "search-col-backward",
+        "search backward in current column",
+    );
     reg.add("n", "search-next", "repeat search forward");
     reg.add("N", "search-prev", "repeat search backward");
 

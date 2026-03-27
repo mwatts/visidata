@@ -39,6 +39,12 @@ impl LoaderRegistry {
         let mut registry = Self::new();
         registry.register(Box::new(super::CsvLoader));
         registry.register(Box::new(super::JsonLoader));
+        registry.register(Box::new(super::YamlLoader));
+        registry.register(Box::new(super::SqliteLoader));
+        registry.register(Box::new(super::ExcelLoader));
+        registry.register(Box::new(super::ParquetLoader));
+        registry.register(Box::new(super::HtmlLoader));
+        registry.register(Box::new(super::FixedWidthLoader));
         registry
     }
 
@@ -63,10 +69,7 @@ impl LoaderRegistry {
     ///
     /// Returns an error if no loader matches the extension or if loading fails.
     pub fn load_file(&self, path: &Path) -> Result<Sheet> {
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let loader = self
             .find_loader(ext)
@@ -95,6 +98,16 @@ mod tests {
         assert!(registry.find_loader("tsv").is_some());
         assert!(registry.find_loader("json").is_some());
         assert!(registry.find_loader("jsonl").is_some());
+        assert!(registry.find_loader("yml").is_some());
+        assert!(registry.find_loader("yaml").is_some());
+        assert!(registry.find_loader("sqlite").is_some());
+        assert!(registry.find_loader("db").is_some());
+        assert!(registry.find_loader("xlsx").is_some());
+        assert!(registry.find_loader("xls").is_some());
+        assert!(registry.find_loader("parquet").is_some());
+        assert!(registry.find_loader("html").is_some());
+        assert!(registry.find_loader("htm").is_some());
+        assert!(registry.find_loader("fixed").is_some());
         assert!(registry.find_loader("unknown").is_none());
     }
 
@@ -103,6 +116,8 @@ mod tests {
         let registry = LoaderRegistry::with_builtins();
         assert!(registry.find_loader("CSV").is_some());
         assert!(registry.find_loader("Json").is_some());
+        assert!(registry.find_loader("XLSX").is_some());
+        assert!(registry.find_loader("PARQUET").is_some());
     }
 
     #[test]

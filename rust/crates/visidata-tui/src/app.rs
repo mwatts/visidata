@@ -134,12 +134,8 @@ impl App {
                 InputMode::RenameColumn(editor) => {
                     Some(format!("rename column: {}", editor.text()))
                 }
-                InputMode::SearchForward(editor) => {
-                    Some(format!("/{}",  editor.text()))
-                }
-                InputMode::SearchBackward(editor) => {
-                    Some(format!("?{}", editor.text()))
-                }
+                InputMode::SearchForward(editor) => Some(format!("/{}", editor.text())),
+                InputMode::SearchBackward(editor) => Some(format!("?{}", editor.text())),
                 InputMode::CommandPalette(editor) => {
                     let query = editor.text();
                     let matches = self.commands.search_commands(&query);
@@ -147,7 +143,14 @@ impl App {
                     Some(format!("command: {query}  → {hint}"))
                 }
             };
-            renderer::draw_sheet(frame, area, sheet, &self.status, input_text.as_deref(), &self.theme);
+            renderer::draw_sheet(
+                frame,
+                area,
+                sheet,
+                &self.status,
+                input_text.as_deref(),
+                &self.theme,
+            );
         } else {
             let text = Text::raw("No sheets open. Press q to quit.");
             frame.render_widget(text, area);
@@ -155,7 +158,10 @@ impl App {
     }
 
     /// Handle a key event in normal mode.
-    #[expect(clippy::too_many_lines, reason = "single match dispatch — splitting would reduce readability")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "single match dispatch — splitting would reduce readability"
+    )]
     fn handle_normal_key(&mut self, key: KeyEvent) {
         // Ctrl-C always quits
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
@@ -211,10 +217,7 @@ impl App {
             KeyCode::Char('-') => {
                 let vis = sheet.visible_columns();
                 if let Some(&col) = vis.get(sheet.cursor_col) {
-                    let col_idx = sheet
-                        .columns
-                        .iter()
-                        .position(|c| c.id == col.id);
+                    let col_idx = sheet.columns.iter().position(|c| c.id == col.id);
                     if let Some(idx) = col_idx {
                         sheet.columns[idx].width = Some(0);
                         sheet.clamp_cursor();
@@ -236,10 +239,7 @@ impl App {
             KeyCode::Char('!') => {
                 let vis = sheet.visible_columns();
                 if let Some(&col) = vis.get(sheet.cursor_col) {
-                    let col_idx = sheet
-                        .columns
-                        .iter()
-                        .position(|c| c.id == col.id);
+                    let col_idx = sheet.columns.iter().position(|c| c.id == col.id);
                     if let Some(idx) = col_idx {
                         sheet.columns[idx].is_key = !sheet.columns[idx].is_key;
                         if sheet.columns[idx].is_key {
@@ -370,10 +370,7 @@ impl App {
                         if let Some(sheet) = self.stack.active_mut() {
                             let vis = sheet.visible_columns();
                             if let Some(&col) = vis.get(sheet.cursor_col) {
-                                let col_idx = sheet
-                                    .columns
-                                    .iter()
-                                    .position(|c| c.id == col.id);
+                                let col_idx = sheet.columns.iter().position(|c| c.id == col.id);
                                 if let Some(idx) = col_idx {
                                     sheet.columns[idx].name = new_name;
                                 }
@@ -469,16 +466,24 @@ impl App {
                 }
             }
             "cursor-down" => {
-                if let Some(s) = self.stack.active_mut() { s.cursor_down(1); }
+                if let Some(s) = self.stack.active_mut() {
+                    s.cursor_down(1);
+                }
             }
             "cursor-up" => {
-                if let Some(s) = self.stack.active_mut() { s.cursor_up(1); }
+                if let Some(s) = self.stack.active_mut() {
+                    s.cursor_up(1);
+                }
             }
             "cursor-right" => {
-                if let Some(s) = self.stack.active_mut() { s.cursor_right(1); }
+                if let Some(s) = self.stack.active_mut() {
+                    s.cursor_right(1);
+                }
             }
             "cursor-left" => {
-                if let Some(s) = self.stack.active_mut() { s.cursor_left(1); }
+                if let Some(s) = self.stack.active_mut() {
+                    s.cursor_left(1);
+                }
             }
             "go-top" => {
                 if let Some(s) = self.stack.active_mut() {
@@ -488,21 +493,24 @@ impl App {
             }
             "go-bottom" => {
                 if let Some(s) = self.stack.active_mut()
-                    && !s.rows.is_empty() {
-                        s.cursor_row = s.rows.len() - 1;
-                    }
+                    && !s.rows.is_empty()
+                {
+                    s.cursor_row = s.rows.len() - 1;
+                }
             }
             "sort-asc" => {
                 if let Some(s) = self.stack.active_mut()
-                    && let Some(idx) = resolve_cursor_col_idx(s) {
-                        s.sort_by(idx, SortDirection::Ascending);
-                    }
+                    && let Some(idx) = resolve_cursor_col_idx(s)
+                {
+                    s.sort_by(idx, SortDirection::Ascending);
+                }
             }
             "sort-desc" => {
                 if let Some(s) = self.stack.active_mut()
-                    && let Some(idx) = resolve_cursor_col_idx(s) {
-                        s.sort_by(idx, SortDirection::Descending);
-                    }
+                    && let Some(idx) = resolve_cursor_col_idx(s)
+                {
+                    s.sort_by(idx, SortDirection::Descending);
+                }
             }
             "select-row" => {
                 if let Some(s) = self.stack.active_mut() {
@@ -532,17 +540,19 @@ impl App {
             "search-prev" => self.repeat_search(false),
             "dup-selected" => {
                 if let Some(s) = self.stack.active()
-                    && s.num_selected() > 0 {
-                        let filtered = s.selected_rows_sheet();
-                        self.stack.push(filtered);
-                    }
+                    && s.num_selected() > 0
+                {
+                    let filtered = s.selected_rows_sheet();
+                    self.stack.push(filtered);
+                }
             }
             "freq-col" => {
                 if let Some(s) = self.stack.active()
-                    && let Some(idx) = resolve_cursor_col_idx(s) {
-                        let freq = s.frequency_sheet(idx);
-                        self.stack.push(freq);
-                    }
+                    && let Some(idx) = resolve_cursor_col_idx(s)
+                {
+                    let freq = s.frequency_sheet(idx);
+                    self.stack.push(freq);
+                }
             }
             "resize-col-max" => {
                 if let Some(s) = self.stack.active_mut() {
@@ -679,16 +689,32 @@ fn key_event_to_string(key: &KeyEvent) -> String {
         KeyCode::Enter => "Enter".into(),
         KeyCode::Esc => "Esc".into(),
         KeyCode::Backspace => {
-            if ctrl { "Ctrl+H".into() } else { "Bksp".into() }
+            if ctrl {
+                "Ctrl+H".into()
+            } else {
+                "Bksp".into()
+            }
         }
         KeyCode::Delete => {
-            if ctrl { "Ctrl+Del".into() } else { "Del".into() }
+            if ctrl {
+                "Ctrl+Del".into()
+            } else {
+                "Del".into()
+            }
         }
         KeyCode::Left => {
-            if ctrl { "Ctrl+Left".into() } else { "Left".into() }
+            if ctrl {
+                "Ctrl+Left".into()
+            } else {
+                "Left".into()
+            }
         }
         KeyCode::Right => {
-            if ctrl { "Ctrl+Right".into() } else { "Right".into() }
+            if ctrl {
+                "Ctrl+Right".into()
+            } else {
+                "Right".into()
+            }
         }
         KeyCode::Home => "Home".into(),
         KeyCode::End => "End".into(),

@@ -53,7 +53,10 @@ pub fn draw_sheet(
 }
 
 /// Draw the table (header + data rows) with cursor highlighting.
-#[expect(clippy::cast_possible_truncation, reason = "display widths won't exceed u16::MAX")]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "display widths won't exceed u16::MAX"
+)]
 fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme) {
     let visible_cols = sheet.visible_columns();
     if visible_cols.is_empty() {
@@ -81,10 +84,7 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme) {
         })
         .collect();
 
-    let widths: Vec<Constraint> = col_widths
-        .iter()
-        .map(|&w| Constraint::Length(w))
-        .collect();
+    let widths: Vec<Constraint> = col_widths.iter().map(|&w| Constraint::Length(w)).collect();
 
     // Header row
     let header_cells: Vec<Cell<'_>> = visible_cols

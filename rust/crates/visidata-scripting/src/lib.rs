@@ -18,42 +18,41 @@ impl ScriptEngine {
     }
 
     /// Register `VisiData` types and functions with the Rhai engine.
-    #[expect(clippy::cast_possible_truncation, reason = "intentional f64 to i64 coercion")]
-    #[expect(clippy::cast_precision_loss, reason = "acceptable i64 to f64 precision loss")]
-    #[expect(clippy::cast_possible_wrap, reason = "string lengths won't exceed i64::MAX")]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "intentional f64 to i64 coercion"
+    )]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "acceptable i64 to f64 precision loss"
+    )]
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "string lengths won't exceed i64::MAX"
+    )]
     fn register_types(engine: &mut Engine) {
         // Value conversion functions available in scripts
         engine.register_fn("to_int", |x: i64| -> i64 { x });
         engine.register_fn("to_int", |x: f64| -> i64 { x as i64 });
         engine.register_fn("to_int", |x: &str| -> Result<i64, Box<EvalAltResult>> {
-            x.parse::<i64>()
-                .map_err(|e| e.to_string().into())
+            x.parse::<i64>().map_err(|e| e.to_string().into())
         });
 
         engine.register_fn("to_float", |x: f64| -> f64 { x });
         engine.register_fn("to_float", |x: i64| -> f64 { x as f64 });
         engine.register_fn("to_float", |x: &str| -> Result<f64, Box<EvalAltResult>> {
-            x.parse::<f64>()
-                .map_err(|e| e.to_string().into())
+            x.parse::<f64>().map_err(|e| e.to_string().into())
         });
 
         engine.register_fn("is_null", |x: Dynamic| -> bool { x.is_unit() });
 
-        engine.register_fn("str_len", |s: &str| -> i64 {
-            s.len() as i64
-        });
+        engine.register_fn("str_len", |s: &str| -> i64 { s.len() as i64 });
 
-        engine.register_fn("str_upper", |s: &str| -> String {
-            s.to_uppercase()
-        });
+        engine.register_fn("str_upper", |s: &str| -> String { s.to_uppercase() });
 
-        engine.register_fn("str_lower", |s: &str| -> String {
-            s.to_lowercase()
-        });
+        engine.register_fn("str_lower", |s: &str| -> String { s.to_lowercase() });
 
-        engine.register_fn("str_trim", |s: &str| -> String {
-            s.trim().to_owned()
-        });
+        engine.register_fn("str_trim", |s: &str| -> String { s.trim().to_owned() });
 
         engine.register_fn("str_contains", |s: &str, pattern: &str| -> bool {
             s.contains(pattern)
@@ -256,8 +255,7 @@ mod tests {
     #[test]
     fn value_to_dynamic_date() {
         use chrono::NaiveDateTime;
-        let d =
-            NaiveDateTime::parse_from_str("2021-07-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let d = NaiveDateTime::parse_from_str("2021-07-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
         let dyn_val = value_to_dynamic(&Value::Date(d));
         // Date becomes a string in Rhai
         assert!(dyn_val.is_string());

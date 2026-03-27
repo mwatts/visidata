@@ -61,8 +61,10 @@ mod tests {
         // All rows should have non-empty keystrokes
         for i in 0..sheet.num_rows() {
             let ks = sheet.get_cell(i, 0);
-            assert!(!matches!(ks, Value::Text(ref s) if s.is_empty()),
-                "row {i} has empty keystrokes");
+            assert!(
+                !matches!(ks, Value::Text(ref s) if s.is_empty()),
+                "row {i} has empty keystrokes"
+            );
         }
     }
 }

@@ -32,8 +32,8 @@ pub fn load_config(path: &Path) -> Result<Config, String> {
         return Ok(Config::default());
     }
 
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
 
     parse_config(&content)
 }
@@ -44,9 +44,7 @@ pub fn load_config(path: &Path) -> Result<Config, String> {
 ///
 /// Returns an error if the TOML is invalid.
 pub fn parse_config(content: &str) -> Result<Config, String> {
-    let table: toml::Table = content
-        .parse()
-        .map_err(|e| format!("invalid TOML: {e}"))?;
+    let table: toml::Table = content.parse().map_err(|e| format!("invalid TOML: {e}"))?;
 
     let mut config = Config::default();
 

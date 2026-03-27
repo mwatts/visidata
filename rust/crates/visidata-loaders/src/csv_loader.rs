@@ -65,7 +65,8 @@ fn load_delimited(path: &Path, delimiter: u8) -> Result<Sheet> {
     // Read all rows
     let mut rows = Vec::new();
     for result in reader.records() {
-        let record = result.with_context(|| format!("failed to read row from {}", path.display()))?;
+        let record =
+            result.with_context(|| format!("failed to read row from {}", path.display()))?;
         let values: Vec<Value> = record
             .iter()
             .map(|field| {
@@ -128,8 +129,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn fixtures_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/fixtures")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures")
     }
 
     #[test]

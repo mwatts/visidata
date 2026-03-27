@@ -52,8 +52,7 @@ impl Loader for JsonLoader {
 
 /// Load a JSON array of objects.
 fn load_json(name: &str, content: &str) -> Result<Sheet> {
-    let parsed: JsonValue =
-        serde_json::from_str(content).context("failed to parse JSON")?;
+    let parsed: JsonValue = serde_json::from_str(content).context("failed to parse JSON")?;
 
     let arr = match parsed {
         JsonValue::Array(a) => a,
@@ -114,8 +113,7 @@ fn objects_to_sheet(name: &str, objects: &[JsonValue]) -> Sheet {
                 .iter()
                 .map(|key| {
                     if let JsonValue::Object(map) = obj {
-                        map.get(key)
-                            .map_or(Value::Null, json_value_to_value)
+                        map.get(key).map_or(Value::Null, json_value_to_value)
                     } else {
                         // Non-object row: put the whole value in the first column
                         Value::Text(obj.to_string())
@@ -169,8 +167,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn fixtures_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/fixtures")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures")
     }
 
     #[test]

@@ -382,18 +382,9 @@ mod tests {
 
     #[test]
     fn clipstr_middle_ascii() {
-        assert_eq!(
-            clipstr_middle("1234567890", 6, "…"),
-            ("12…890".into(), 6)
-        );
-        assert_eq!(
-            clipstr_middle("1234567890", 7, "…"),
-            ("123…890".into(), 7)
-        );
-        assert_eq!(
-            clipstr_middle("1234567890", 8, "…"),
-            ("123…7890".into(), 8)
-        );
+        assert_eq!(clipstr_middle("1234567890", 6, "…"), ("12…890".into(), 6));
+        assert_eq!(clipstr_middle("1234567890", 7, "…"), ("123…890".into(), 7));
+        assert_eq!(clipstr_middle("1234567890", 8, "…"), ("123…7890".into(), 8));
         assert_eq!(
             clipstr_middle("1234567890", 9, "…"),
             ("1234…7890".into(), 9)
