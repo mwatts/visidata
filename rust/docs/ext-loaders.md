@@ -2,8 +2,14 @@
 
 External loaders extend `vd` with file format support that has heavy native
 dependencies — database drivers, JVM-backed systems, large C libraries — without
-those dependencies entering the host binary. The first external loader is
-`vd_duckdb`.
+those dependencies entering the host binary.
+
+Current external loaders:
+
+| Binary | File extensions | Transport |
+|---|---|---|
+| `vd_duckdb` | `.duckdb`, `.ddb` | Arrow IPC |
+| `vd_turso` | `.turso`, `.tdb` | Arrow IPC |
 
 ## Architecture
 
@@ -27,9 +33,10 @@ ExtLoader implements Loader
 ```
 crates/
   visidata-ext-protocol/   shared serde types; no heavy deps
-  visidata-loaders/        gains ext_loader + ext_discovery modules
+  visidata-loaders/        ext_loader + ext_discovery modules (host side)
 bin/
   vd_duckdb/               external loader binary for DuckDB
+  vd_turso/                external loader binary for TursoDB
 ```
 
 ## Transport
@@ -40,11 +47,11 @@ in the manifest:
 | `transport` field | Format | Use when |
 |---|---|---|
 | `"arrow-ipc"` (default) | Arrow IPC stream on stdout | Extension uses the same Arrow version as the host |
-| `"ndjson"` | Newline-delimited JSON on stdout | Extension bundles its own Arrow (e.g. DuckDB) |
+| `"ndjson"` | Newline-delimited JSON on stdout | Extension cannot produce Arrow output |
 
-`vd_duckdb` uses `"ndjson"` because DuckDB bundles Arrow internally and its
-types are not compatible with the host's `arrow` crate at the Rust type level.
-The host deserialises NDJSON rows using the same path as the JSON loader.
+Both `vd_duckdb` and `vd_turso` use `"arrow-ipc"`. Both depend on
+`arrow = "58"` from the workspace, the same version as the host, so Arrow types
+are compatible at the Rust type level.
 
 ## Protocol
 
@@ -149,6 +156,21 @@ for now the user can invoke it via the command palette with `load-table`.
   equivalent are rendered as their Arrow display string.
 - The extension opens DuckDB in **read-only mode** (`Connection::open_with_flags`
   with `AccessMode::ReadOnly`) to prevent accidental writes.
+
+## TursoDB-Specific Notes
+
+- `turso` is async-only. `vd_turso` wraps the entry point with a
+  `tokio::runtime::Builder::new_current_thread()` runtime.
+- TursoDB has no native Arrow output. `vd_turso` collects all rows into memory,
+  infers Arrow column types from the `turso::Value` variants seen, then builds
+  typed Arrow arrays (`Int64`, `Float64`, `Utf8`, `Binary`).
+- Type inference per column: pure-blob → `Binary`; any text or mixed-blob →
+  `Utf8`; any real (widens integers) → `Float64`; only integers → `Int64`;
+  all-null → `Utf8`. All fields are nullable.
+- The `turso` crate has no read-only open flag; the extension opens normally
+  but never writes.
+- Table index SQL uses `sqlite_master` (SQLite-compatible) rather than
+  `information_schema`.
 
 ## Adding Another External Loader
 
