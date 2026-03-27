@@ -14,7 +14,7 @@ Each entry has:
 
 ### GAP-010 — Horizontal scrolling (`left_col`)
 **Python**: `movement.py` — left/right column navigation. Columns that scroll off the left edge are hidden.
-**Rust now**: `Sheet.left_col` field exists but the renderer always starts at column index 0, ignoring `left_col`.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: In `renderer.rs::draw_table`, iterate visible columns starting from `sheet.left_col` instead of 0. In `handle_normal_key` for `cursor_right`/`cursor_left`, when `cursor_col` would move off screen, increment/decrement `sheet.left_col`. Add `Ctrl+Right` / `Ctrl+Left` to scroll a page.
 
 ---
@@ -110,7 +110,7 @@ Each entry has:
 
 ### GAP-053 — Edit cell for all selected rows (`ge`)
 **Python**: `sheets.py` — `setcol-input`.
-**Rust now**: See GAP-026. Listed here as editing gap for completeness.
+**Rust now**: ✅ See GAP-026 (already closed).
 **Instructions**: See GAP-026.
 
 ---
@@ -175,7 +175,7 @@ Each entry has:
 
 ### GAP-078 — FrequencySheet drill-down into source rows
 **Python**: `freqtbl.py` — pressing Enter on a frequency row opens a filtered sheet of the source rows matching that value.
-**Rust now**: `F` works but the resulting frequency sheet has no `drill` set.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: When building the frequency sheet in `Sheet::frequency_sheet`, set `sheet.drill = Some(Arc::new(FreqDrill { source_sheet_idx, col_idx }))`. Add `FreqDrill` struct in `visidata-loaders` or a new module. `open_row` filters source sheet rows matching the frequency group value and returns a new sheet. Requires storing a reference/snapshot of the source sheet data in `FreqDrill`.
 
 ---
@@ -186,7 +186,7 @@ Each entry has:
 
 ### GAP-079 — ColumnsSheet drill-down and editing
 **Python**: `metasheets.py` — pressing Enter on a ColumnsSheet row opens the frequency table for that column. Column metadata (name, width, type, key) is editable in-place.
-**Rust now**: `C` opens a read-only columns sheet with no drill and no editing.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**:
   1. **Drill**: Set `drill` on the columns sheet to a `ColsDrill` that opens `sheet.frequency_sheet(row_col_idx)` when Enter is pressed.
   2. **Editing**: Wire `e` on the columns sheet to edit the `name`/`width`/`type`/`key` fields and write back to the source sheet's column definition. Requires the columns sheet to hold a reference to its source sheet index.
@@ -195,42 +195,42 @@ Each entry has:
 
 ### GAP-080 — SheetsSheet drill-down (Enter navigates to that sheet)
 **Python**: `indexsheet.py` — pressing Enter on the SheetsSheet navigates to (pushes) the selected sheet.
-**Rust now**: `S` opens a sheets list sheet but Enter does nothing.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: The sheets sheet rows contain `Value::Text(sheet.name)` in column 0. Add a `SheetsDrill { }` struct implementing `DrillAction` that reads the sheet name from col 0, finds it in `self.stack` by name, and swaps to it. Since `DrillAction::open_row` returns a `Sheet`, the implementation needs to either return a clone of the target sheet or use a different mechanism (e.g., a special `Value::SheetRef(SheetId)` that the TUI handles separately). Alternative simpler approach: add a special `SpecialAction::GotoSheet` handled in `dispatch_command("open-row")` before calling `drill.open_row`.
 
 ---
 
 ### GAP-081 — DescribeSheet drill-down (select source rows)
 **Python**: `features/describe.py` — `zs`/`zu` on a describe sheet selects/unselects source rows falling in that column's range.
-**Rust now**: `I` describe sheet is read-only with no drill.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: Set `drill` on describe sheet. `open_row` on a describe row returns a filtered sheet of source rows for that column's non-null values. This is lower priority.
 
 ---
 
 ### GAP-082 — Open global options sheet (`O`)
 **Python**: `optionssheet.py` — `O` opens the global options sheet.
-**Rust now**: `O` is listed in `builtin_commands` and `dispatch_command` pushes an options sheet, but the options sheet is read-only display only.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: Wire `e` on the options sheet to open `InputMode::EditCell` for the value column. On Accept, call `options_manager.set(option_name, new_value, "global")`. Push `UndoAction` for the option change. The options manager already supports `set()`.
 
 ---
 
 ### GAP-083 — Open sheet-local options (`zO`)
 **Python**: `optionssheet.py` — `zO` opens options scoped to the current sheet.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: Same as GAP-082 but pass current sheet's name/type as context to `options_manager.set(name, value, sheet_name)`. Bind `zO`.
 
 ---
 
 ### GAP-084 — Open ~/.visidatarc as text sheet (`gO`)
 **Python**: `optionssheet.py` — `gO` opens the user config file.
-**Rust now**: Missing. There is no config file concept yet.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: Define a config file path (e.g., `~/.vdrc` or `~/.config/vd/config.toml`). Push a `text_sheet_from_file` for that path. Allow editing and saving. Bind `gO`.
 
 ---
 
 ### GAP-086 — All-sessions sheets sheet (`gS`)
 **Python**: `indexsheet.py` — `gS` shows every sheet ever opened in the session, not just the stack.
-**Rust now**: `S` shows the current stack only.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: Add `all_sheets: Vec<SheetId>` to `App` (or a vec of sheet names) tracking every sheet ever pushed. `gS` builds a `sheets_sheet` from that history. Bind `gS`.
 
 ---
@@ -308,14 +308,14 @@ Each entry has:
 
 ### GAP-098 — Persistent aggregators on columns (`+`)
 **Python**: `aggregators.py` — `aggregate-col` marks a column with one or more aggregators; their results appear in frequency/pivot tables and in a dedicated summary row.
-**Rust now**: `+` computes and shows in status bar only. No aggregator is stored on the column.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: Add `aggregators: Vec<AggFunc>` to `Column`. `+` prompts to choose from available functions and appends to the list. Display aggregate totals in the status bar footer row and in FrequencySheet/PivotSheet cells.
 
 ---
 
 ### GAP-099 — Memo aggregate to status (`z+`)
 **Python**: `aggregators.py` — `memo-aggregate` shows result in status bar and stores in memory.
-**Rust now**: `+` already shows in status bar. The difference is `z+` computes a specific aggregator chosen interactively rather than all five.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: Prompt for aggregator name. Compute and display chosen aggregator's result. Bind `z+`.
 
 ---
@@ -378,7 +378,7 @@ Each entry has:
 
 ### GAP-107 — Color options consumed by renderer
 **Python**: `color_selected_row`, `color_cursor_row`, `color_key_col`, etc. are read from options and can be changed at runtime.
-**Rust now**: `Theme` struct has hardcoded colours; color options are declared in `builtin_options` but never read.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: In `app.rs`, after loading options, construct a `Theme` from option values. `color_selected_row` → `theme.row_selected`, etc. Re-derive theme when options change.
 
 ---
@@ -396,7 +396,7 @@ Each entry has:
 
 ### GAP-110 — Progress percentage vs row count
 **Python**: Shows percentage like `"42%"` based on total file size or row count estimate.
-**Rust now**: Shows raw row count `"loading… 1234 rows"`. The `LoadingState::Loading { rows_loaded }` has no total.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: Add `rows_total: Option<usize>` to `LoadingState::Loading`. For CSV/fixed-width, estimate from file size. Update status bar to show `"42% (1234 rows)"` when total is known.
 
 ---
@@ -414,21 +414,21 @@ Each entry has:
 
 ### GAP-113 — Save SQLite back to source
 **Python**: `loaders/sqlite.py` — `SqliteSheet` has `putChanges()` executing `INSERT`/`UPDATE`/`DELETE` SQL within a transaction.
-**Rust now**: `SqliteLoader` is read-only; no saver registered for `.sqlite`.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: Add `save_sqlite(sheet: &Sheet, path: &Path) -> Result<()>` to `sqlite_loader.rs`. Strategy: `DROP TABLE IF EXISTS "{name}"`, `CREATE TABLE`, `INSERT` all rows. More advanced: use the deferred-edit pattern (track adds/mods/dels). For initial implementation, a full table replacement is acceptable. Register as a saver in `saver.rs`.
 
 ---
 
 ### GAP-117 — Excel loader: only reads first sheet
 **Python**: `loaders/xlsx.py` — `XlsxIndexSheet` lists all worksheets; Enter opens any sheet.
-**Rust now**: `ExcelLoader` opens only the first worksheet from any `.xlsx`/`.xls`/`.ods` file.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: Use `calamine::open_workbook_auto` and iterate `workbook.sheet_names()`. Build an index sheet (name, row_count). Set `drill` to an `ExcelDrill { path, sheet_name }` that loads the named worksheet. The `calamine` crate supports named sheet access via `worksheet_range(name)`.
 
 ---
 
 ### GAP-120 — JSON streaming / JSONL improvements
 **Python**: Handles deeply nested JSON, arrays at root level, single objects, auto-detects format.
-**Rust now**: `JsonLoader` handles flat arrays of objects and JSONL. Nested objects/arrays are serialised to string. Root-level single objects produce a single row.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: Improve `JsonLoader` to detect root-level arrays of arrays (SequenceSheet), objects within arrays whose values are themselves arrays (list columns), and provide better nested key expansion (related to GAP-041).
 
 ---
@@ -453,7 +453,7 @@ Each entry has:
 
 ### GAP-123 — Status bar: show current aggregator / selection info
 **Python**: Status bar shows the aggregator total for the cursor column when one is assigned.
-**Rust now**: Status bar shows row/col counts and selection count but no aggregator total.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: After GAP-098 (persistent aggregators), read `col.aggregators.first()`, compute result, append to status bar string.
 
 ---
@@ -478,14 +478,14 @@ Each entry has:
 
 ### GAP-127 — Named macros
 **Python**: `macros.py` — macros can be assigned a keystroke trigger (e.g., `@1`–`@9`) and saved persistently.
-**Rust now**: Only one macro ("last") is stored in memory; no naming, no keystroke assignment, no persistence.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: Add `HashMap<String, Macro>` to `MacroStore`. Allow naming a macro when stopping recording. Save/load from `~/.config/vd/macros.json` on startup/shutdown. Bind named macros to their assigned keystrokes.
 
 ---
 
 ### GAP-128 — Macro replay from file / command log
 **Python**: `cmdlog.py` — a `.vdj` file can be replayed to reproduce a session.
-**Rust now**: `macro_recorder.rs` supports recording but no file-based replay.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: After GAP-091 (command log), add `replay_command_log(path)` that reads the `.vdj` file and dispatches each command via `dispatch_command`. Bind `gCtrl+P` or palette `replay:`.
 
 ---
@@ -515,7 +515,7 @@ Already listed as GAP-049.
 
 ### GAP-134 — External loader: custom query via command palette
 **Python**: `SqliteSheet.addCommand('', 'exec-sql', ...)` — user can type arbitrary SQL.
-**Rust now**: No `exec-sql` equivalent for ext-loader sheets.
+**Rust now**: ✅ Implemented (commit: feat/rust final)
 **Instructions**: When the active sheet has a `drill` of type `ExtDrill`, add a `exec-sql` command (palette prefix `sql:`) that takes arbitrary SQL, calls `ext_drill.loader.run_query(&ext_drill.db_path, Some(&sql), HashMap::new())`, and pushes the result.
 
 ---
