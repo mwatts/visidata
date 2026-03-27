@@ -3,6 +3,7 @@ mod column;
 mod row;
 mod sheet;
 mod sheet_stack;
+pub mod typeinfer;
 
 pub use column::{Column, ColumnId, ColumnType};
 pub use row::{Row, RowId};

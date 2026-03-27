@@ -15,16 +15,40 @@ const MAX_COL_WIDTH: u16 = 40;
 const MIN_COL_WIDTH: u16 = 3;
 
 /// Draw a sheet into the given frame area.
-pub fn draw_sheet(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, status: &str) {
-    // Reserve 1 line at bottom for status bar
-    let chunks = Layout::vertical([
-        Constraint::Min(3),    // table
-        Constraint::Length(1), // status bar
-    ])
-    .split(area);
+pub fn draw_sheet(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    sheet: &Sheet,
+    status: &str,
+    input_line: Option<&str>,
+) {
+    let has_input = input_line.is_some();
+    let chunks = if has_input {
+        Layout::vertical([
+            Constraint::Min(3),    // table
+            Constraint::Length(1), // input line
+            Constraint::Length(1), // status bar
+        ])
+        .split(area)
+    } else {
+        Layout::vertical([
+            Constraint::Min(3),    // table
+            Constraint::Length(1), // status bar
+        ])
+        .split(area)
+    };
 
     draw_table(frame, chunks[0], sheet);
-    draw_status_bar(frame, chunks[1], status);
+
+    if has_input {
+        let input_text = input_line.unwrap_or("");
+        let input_line_widget =
+            Line::from(input_text).style(Style::new().fg(Color::Yellow).on_black());
+        frame.render_widget(input_line_widget, chunks[1]);
+        draw_status_bar(frame, chunks[2], status);
+    } else {
+        draw_status_bar(frame, chunks[1], status);
+    }
 }
 
 /// Draw the table (header + data rows) with cursor highlighting.

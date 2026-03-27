@@ -1,5 +1,6 @@
 pub mod app;
 pub mod cliptext;
+pub mod input;
 pub mod renderer;
 
 pub use app::App;
