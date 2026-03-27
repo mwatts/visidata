@@ -11,7 +11,7 @@ use crossterm::terminal::{
 use ratatui::DefaultTerminal;
 use ratatui::prelude::*;
 
-use visidata_core::{ColumnType, Sheet, SheetStack};
+use visidata_core::{ColumnType, Sheet, SheetStack, SortDirection};
 
 use crate::input::{EditResult, LineEditor};
 use crate::renderer;
@@ -23,6 +23,10 @@ enum InputMode {
     Normal,
     /// Renaming the current column.
     RenameColumn(LineEditor),
+    /// Forward search in current column.
+    SearchForward(LineEditor),
+    /// Backward search in current column.
+    SearchBackward(LineEditor),
 }
 
 /// Application state for the TUI.
@@ -39,6 +43,12 @@ pub struct App {
 
     /// Current input mode.
     mode: InputMode,
+
+    /// Last search pattern (for `n`/`N` repeat).
+    last_search: Option<String>,
+
+    /// Whether last search was forward (true) or backward (false).
+    last_search_forward: bool,
 }
 
 impl App {
@@ -52,6 +62,8 @@ impl App {
             running: true,
             status: String::new(),
             mode: InputMode::Normal,
+            last_search: None,
+            last_search_forward: true,
         }
     }
 
@@ -82,9 +94,11 @@ impl App {
             terminal.draw(|frame| self.draw(frame))?;
 
             if let Event::Key(key) = event::read()? {
-                match &mut self.mode {
+                match &self.mode {
                     InputMode::Normal => self.handle_normal_key(key),
-                    InputMode::RenameColumn(_) => self.handle_input_key(key),
+                    InputMode::RenameColumn(_)
+                    | InputMode::SearchForward(_)
+                    | InputMode::SearchBackward(_) => self.handle_input_key(key),
                 }
             }
         }
@@ -101,6 +115,12 @@ impl App {
                 InputMode::RenameColumn(editor) => {
                     Some(format!("rename column: {}", editor.text()))
                 }
+                InputMode::SearchForward(editor) => {
+                    Some(format!("/{}",  editor.text()))
+                }
+                InputMode::SearchBackward(editor) => {
+                    Some(format!("?{}", editor.text()))
+                }
             };
             renderer::draw_sheet(frame, area, sheet, &self.status, input_text.as_deref());
         } else {
@@ -110,6 +130,7 @@ impl App {
     }
 
     /// Handle a key event in normal mode.
+    #[expect(clippy::too_many_lines, reason = "single match dispatch — splitting would reduce readability")]
     fn handle_normal_key(&mut self, key: KeyEvent) {
         // Ctrl-C always quits
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
@@ -212,6 +233,67 @@ impl App {
             KeyCode::Char('~') => set_cursor_col_type(sheet, ColumnType::Text),
             KeyCode::Char('@') => set_cursor_col_type(sheet, ColumnType::Date),
 
+            // --- Sorting ---
+            KeyCode::Char('[') => {
+                let col_idx = resolve_cursor_col_idx(sheet);
+                if let Some(idx) = col_idx {
+                    sheet.sort_by(idx, SortDirection::Ascending);
+                }
+            }
+            KeyCode::Char(']') => {
+                let col_idx = resolve_cursor_col_idx(sheet);
+                if let Some(idx) = col_idx {
+                    sheet.sort_by(idx, SortDirection::Descending);
+                }
+            }
+
+            // --- Selection ---
+            KeyCode::Char('s') => {
+                sheet.select_current();
+                sheet.cursor_down(1);
+            }
+            KeyCode::Char('u') => {
+                sheet.unselect_current();
+                sheet.cursor_down(1);
+            }
+            KeyCode::Char('t') => {
+                sheet.toggle_select_current();
+                sheet.cursor_down(1);
+            }
+
+            // --- Search ---
+            KeyCode::Char('/') => {
+                self.mode = InputMode::SearchForward(LineEditor::new(""));
+                return;
+            }
+            KeyCode::Char('?') => {
+                self.mode = InputMode::SearchBackward(LineEditor::new(""));
+                return;
+            }
+            KeyCode::Char('n') => {
+                self.repeat_search(true);
+            }
+            KeyCode::Char('N') => {
+                self.repeat_search(false);
+            }
+
+            // --- Filter (selected rows to new sheet) ---
+            KeyCode::Char('"') => {
+                if sheet.num_selected() > 0 {
+                    let filtered = sheet.selected_rows_sheet();
+                    self.stack.push(filtered);
+                }
+            }
+
+            // --- Frequency table ---
+            KeyCode::Char('F') => {
+                let col_idx = resolve_cursor_col_idx(sheet);
+                if let Some(idx) = col_idx {
+                    let freq = sheet.frequency_sheet(idx);
+                    self.stack.push(freq);
+                }
+            }
+
             _ => {}
         }
 
@@ -251,10 +333,72 @@ impl App {
                     }
                 }
             }
+            InputMode::SearchForward(mut editor) => match editor.handle_key(&key_str) {
+                EditResult::Accept(pattern) => {
+                    self.last_search = Some(pattern.clone());
+                    self.last_search_forward = true;
+                    self.execute_search(&pattern, true);
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Cancel => {
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Continue => {
+                    self.mode = InputMode::SearchForward(editor);
+                }
+            },
+            InputMode::SearchBackward(mut editor) => match editor.handle_key(&key_str) {
+                EditResult::Accept(pattern) => {
+                    self.last_search = Some(pattern.clone());
+                    self.last_search_forward = false;
+                    self.execute_search(&pattern, false);
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Cancel => {
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Continue => {
+                    self.mode = InputMode::SearchBackward(editor);
+                }
+            },
             InputMode::Normal => unreachable!(),
         }
 
         self.update_status();
+    }
+
+    /// Execute a search in the given direction.
+    fn execute_search(&mut self, pattern: &str, forward: bool) {
+        if pattern.is_empty() {
+            return;
+        }
+        let Some(sheet) = self.stack.active_mut() else {
+            return;
+        };
+        let col_idx = resolve_cursor_col_idx(sheet).unwrap_or(0);
+        let result = if forward {
+            sheet.search_forward(col_idx, pattern)
+        } else {
+            sheet.search_backward(col_idx, pattern)
+        };
+        if let Some(row_idx) = result {
+            sheet.cursor_row = row_idx;
+        } else {
+            self.status = format!("not found: {pattern}");
+        }
+    }
+
+    /// Repeat the last search in the same or opposite direction.
+    fn repeat_search(&mut self, same_direction: bool) {
+        let Some(pattern) = self.last_search.clone() else {
+            return;
+        };
+        let forward = if same_direction {
+            self.last_search_forward
+        } else {
+            !self.last_search_forward
+        };
+        self.execute_search(&pattern, forward);
     }
 
     /// Update the status message based on current state.
@@ -322,6 +466,13 @@ fn set_cursor_col_type(sheet: &mut Sheet, col_type: ColumnType) {
             sheet.columns[idx].col_type = col_type;
         }
     }
+}
+
+/// Resolve the actual column index for the cursor's visible column position.
+fn resolve_cursor_col_idx(sheet: &Sheet) -> Option<usize> {
+    let vis = sheet.visible_columns();
+    let col = vis.get(sheet.cursor_col)?;
+    sheet.columns.iter().position(|c| c.id == col.id)
 }
 
 /// Convert a crossterm `KeyEvent` to a string matching the `LineEditor` key format.

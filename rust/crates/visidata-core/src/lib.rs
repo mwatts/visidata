@@ -7,6 +7,6 @@ pub mod typeinfer;
 
 pub use column::{Column, ColumnId, ColumnType};
 pub use row::{Row, RowId};
-pub use sheet::{Sheet, SheetId};
+pub use sheet::{Sheet, SheetId, SortDirection, SortKey};
 pub use sheet_stack::SheetStack;
 pub use value::Value;

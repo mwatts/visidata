@@ -217,6 +217,177 @@ impl Sheet {
     pub fn add_row(&mut self, values: Vec<Value>) {
         self.rows.push(Row::new(values));
     }
+
+    // --- Sorting ---
+
+    /// Sort rows by the given column index and direction.
+    ///
+    /// Replaces any existing sort keys with a single key.
+    pub fn sort_by(&mut self, col_idx: usize, direction: SortDirection) {
+        self.sort_keys = vec![SortKey { col_idx, direction }];
+        self.apply_sort();
+    }
+
+    /// Add a secondary sort key (stable sort).
+    pub fn sort_by_add(&mut self, col_idx: usize, direction: SortDirection) {
+        self.sort_keys.push(SortKey { col_idx, direction });
+        self.apply_sort();
+    }
+
+    /// Apply the current sort keys to the rows.
+    fn apply_sort(&mut self) {
+        let columns = &self.columns;
+        let sort_keys = &self.sort_keys;
+
+        self.rows.sort_by(|a, b| {
+            for key in sort_keys {
+                let Some(col) = columns.get(key.col_idx) else {
+                    continue;
+                };
+                let va = col.typed_value(a);
+                let vb = col.typed_value(b);
+                let ord = va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Equal);
+                let ord = match key.direction {
+                    SortDirection::Ascending => ord,
+                    SortDirection::Descending => ord.reverse(),
+                };
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
+
+        self.clamp_cursor();
+    }
+
+    // --- Selection ---
+
+    /// Select the current cursor row.
+    pub fn select_current(&mut self) {
+        if let Some(row) = self.rows.get_mut(self.cursor_row) {
+            row.selected = true;
+        }
+    }
+
+    /// Unselect the current cursor row.
+    pub fn unselect_current(&mut self) {
+        if let Some(row) = self.rows.get_mut(self.cursor_row) {
+            row.selected = false;
+        }
+    }
+
+    /// Select all rows.
+    pub fn select_all(&mut self) {
+        for row in &mut self.rows {
+            row.selected = true;
+        }
+    }
+
+    /// Unselect all rows.
+    pub fn unselect_all(&mut self) {
+        for row in &mut self.rows {
+            row.selected = false;
+        }
+    }
+
+    /// Toggle selection on the current cursor row.
+    pub fn toggle_select_current(&mut self) {
+        if let Some(row) = self.rows.get_mut(self.cursor_row) {
+            row.selected = !row.selected;
+        }
+    }
+
+    /// Returns the selected rows as a new filtered sheet.
+    #[must_use]
+    pub fn selected_rows_sheet(&self) -> Self {
+        let selected_rows: Vec<Row> = self
+            .rows
+            .iter()
+            .filter(|r| r.selected)
+            .cloned()
+            .collect();
+        let mut sheet = Self::with_data(
+            format!("{}_selected", self.name),
+            self.columns.clone(),
+            selected_rows,
+        );
+        sheet.source.clone_from(&self.source);
+        sheet
+    }
+
+    // --- Search ---
+
+    /// Search forward from cursor for a regex match in the current column.
+    ///
+    /// Returns the row index of the first match, or `None`.
+    #[must_use]
+    pub fn search_forward(&self, col_idx: usize, pattern: &str) -> Option<usize> {
+        let re = regex::Regex::new(pattern).ok()?;
+        let start = self.cursor_row + 1;
+        // Search from cursor+1 to end, then wrap to beginning
+        for i in (start..self.rows.len()).chain(0..start) {
+            if let Some(col) = self.columns.get(col_idx) {
+                let display = col.display_value(&self.rows[i]);
+                if re.is_match(&display) {
+                    return Some(i);
+                }
+            }
+        }
+        None
+    }
+
+    /// Search backward from cursor for a regex match in the current column.
+    #[must_use]
+    pub fn search_backward(&self, col_idx: usize, pattern: &str) -> Option<usize> {
+        let re = regex::Regex::new(pattern).ok()?;
+        let start = self.cursor_row;
+        // Search from cursor-1 backwards, then wrap from end
+        for i in (0..start).rev().chain((start..self.rows.len()).rev()) {
+            if let Some(col) = self.columns.get(col_idx) {
+                let display = col.display_value(&self.rows[i]);
+                if re.is_match(&display) {
+                    return Some(i);
+                }
+            }
+        }
+        None
+    }
+
+    // --- Frequency ---
+
+    /// Create a frequency table sheet for the given column.
+    #[must_use]
+    pub fn frequency_sheet(&self, col_idx: usize) -> Self {
+        use std::collections::BTreeMap;
+
+        let Some(col) = self.columns.get(col_idx) else {
+            return Self::new(format!("{}_freq", self.name));
+        };
+
+        // Count occurrences of each display value
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for row in &self.rows {
+            let display = col.display_value(row);
+            *counts.entry(display).or_insert(0) += 1;
+        }
+
+        // Build the frequency sheet
+        let columns = vec![
+            Column::new(ColumnId(0), &col.name, 0),
+            Column::new(ColumnId(1), "count", 1),
+        ];
+
+        let rows: Vec<Row> = counts
+            .into_iter()
+            .map(|(val, count)| {
+                #[expect(clippy::cast_possible_wrap, reason = "row counts won't exceed i64::MAX")]
+                Row::new(vec![Value::Text(val), Value::Int(count as i64)])
+            })
+            .collect();
+
+        Self::with_data(format!("{}_freq", col.name), columns, rows)
+    }
 }
 
 #[cfg(test)]
@@ -421,5 +592,207 @@ mod tests {
         assert!(sheet.source.is_none());
         assert!(sheet.sort_keys.is_empty());
         assert_eq!(sheet.num_keys, 0);
+    }
+
+    // --- Sort tests ---
+
+    #[test]
+    fn sort_ascending() {
+        let mut sheet = sample_sheet();
+        // Sort by age (col 1) ascending: Bob(25) < Alice(30) < Carol(35)
+        sheet.sort_by(1, SortDirection::Ascending);
+        assert_eq!(sheet.get_cell(0, 0), Value::Text("Bob".into()));
+        assert_eq!(sheet.get_cell(1, 0), Value::Text("Alice".into()));
+        assert_eq!(sheet.get_cell(2, 0), Value::Text("Carol".into()));
+    }
+
+    #[test]
+    fn sort_descending() {
+        let mut sheet = sample_sheet();
+        sheet.sort_by(1, SortDirection::Descending);
+        assert_eq!(sheet.get_cell(0, 0), Value::Text("Carol".into()));
+        assert_eq!(sheet.get_cell(2, 0), Value::Text("Bob".into()));
+    }
+
+    #[test]
+    fn sort_by_name_ascending() {
+        let mut sheet = sample_sheet();
+        sheet.sort_by(0, SortDirection::Ascending);
+        assert_eq!(sheet.get_cell(0, 0), Value::Text("Alice".into()));
+        assert_eq!(sheet.get_cell(1, 0), Value::Text("Bob".into()));
+        assert_eq!(sheet.get_cell(2, 0), Value::Text("Carol".into()));
+    }
+
+    #[test]
+    fn sort_stable_secondary() {
+        // Create sheet with duplicate values in first column
+        let columns = vec![
+            Column::new(ColumnId(0), "group", 0),
+            Column::new(ColumnId(1), "value", 1),
+        ];
+        let rows = vec![
+            Row::new(vec![Value::Text("B".into()), Value::Int(2)]),
+            Row::new(vec![Value::Text("A".into()), Value::Int(3)]),
+            Row::new(vec![Value::Text("B".into()), Value::Int(1)]),
+            Row::new(vec![Value::Text("A".into()), Value::Int(1)]),
+        ];
+        let mut sheet = Sheet::with_data("test", columns, rows);
+
+        // Primary sort by group, secondary by value
+        sheet.sort_by(0, SortDirection::Ascending);
+        sheet.sort_by_add(1, SortDirection::Ascending);
+
+        assert_eq!(sheet.get_cell(0, 0), Value::Text("A".into()));
+        assert_eq!(sheet.get_cell(0, 1), Value::Int(1));
+        assert_eq!(sheet.get_cell(1, 0), Value::Text("A".into()));
+        assert_eq!(sheet.get_cell(1, 1), Value::Int(3));
+        assert_eq!(sheet.get_cell(2, 0), Value::Text("B".into()));
+        assert_eq!(sheet.get_cell(2, 1), Value::Int(1));
+    }
+
+    // --- Selection tests ---
+
+    #[test]
+    fn select_and_unselect_current() {
+        let mut sheet = sample_sheet();
+        assert_eq!(sheet.num_selected(), 0);
+
+        sheet.select_current();
+        assert_eq!(sheet.num_selected(), 1);
+        assert!(sheet.rows[0].selected);
+
+        sheet.unselect_current();
+        assert_eq!(sheet.num_selected(), 0);
+    }
+
+    #[test]
+    fn select_all_unselect_all() {
+        let mut sheet = sample_sheet();
+        sheet.select_all();
+        assert_eq!(sheet.num_selected(), 3);
+
+        sheet.unselect_all();
+        assert_eq!(sheet.num_selected(), 0);
+    }
+
+    #[test]
+    fn toggle_select() {
+        let mut sheet = sample_sheet();
+        sheet.toggle_select_current();
+        assert!(sheet.rows[0].selected);
+        sheet.toggle_select_current();
+        assert!(!sheet.rows[0].selected);
+    }
+
+    #[test]
+    fn selected_rows_sheet() {
+        let mut sheet = sample_sheet();
+        sheet.rows[0].selected = true;
+        sheet.rows[2].selected = true;
+
+        let filtered = sheet.selected_rows_sheet();
+        assert_eq!(filtered.name, "test_selected");
+        assert_eq!(filtered.num_rows(), 2);
+        assert_eq!(filtered.num_cols(), 3);
+        assert_eq!(filtered.get_cell(0, 0), Value::Text("Alice".into()));
+        assert_eq!(filtered.get_cell(1, 0), Value::Text("Carol".into()));
+    }
+
+    #[test]
+    fn selected_rows_sheet_empty() {
+        let sheet = sample_sheet();
+        let filtered = sheet.selected_rows_sheet();
+        assert_eq!(filtered.num_rows(), 0);
+    }
+
+    // --- Search tests ---
+
+    #[test]
+    fn search_forward_found() {
+        let sheet = sample_sheet();
+        let result = sheet.search_forward(0, "Bob");
+        assert_eq!(result, Some(1));
+    }
+
+    #[test]
+    fn search_forward_not_found() {
+        let sheet = sample_sheet();
+        let result = sheet.search_forward(0, "Zzzz");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn search_forward_regex() {
+        let sheet = sample_sheet();
+        let result = sheet.search_forward(0, "^C");
+        assert_eq!(result, Some(2)); // Carol
+    }
+
+    #[test]
+    fn search_forward_wraps() {
+        let mut sheet = sample_sheet();
+        sheet.cursor_row = 2; // at Carol
+        let result = sheet.search_forward(0, "Alice");
+        assert_eq!(result, Some(0)); // wraps to beginning
+    }
+
+    #[test]
+    fn search_backward_found() {
+        let mut sheet = sample_sheet();
+        sheet.cursor_row = 2;
+        let result = sheet.search_backward(0, "Alice");
+        assert_eq!(result, Some(0));
+    }
+
+    #[test]
+    fn search_backward_wraps() {
+        let sheet = sample_sheet(); // cursor at 0
+        let result = sheet.search_backward(0, "Carol");
+        assert_eq!(result, Some(2)); // wraps to end
+    }
+
+    #[test]
+    fn search_invalid_regex() {
+        let sheet = sample_sheet();
+        let result = sheet.search_forward(0, "[invalid");
+        assert_eq!(result, None);
+    }
+
+    // --- Frequency tests ---
+
+    #[test]
+    fn frequency_sheet_basic() {
+        // Create sheet with repeated values
+        let columns = vec![
+            Column::new(ColumnId(0), "color", 0),
+        ];
+        let rows = vec![
+            Row::new(vec![Value::Text("red".into())]),
+            Row::new(vec![Value::Text("blue".into())]),
+            Row::new(vec![Value::Text("red".into())]),
+            Row::new(vec![Value::Text("green".into())]),
+            Row::new(vec![Value::Text("red".into())]),
+        ];
+        let sheet = Sheet::with_data("test", columns, rows);
+        let freq = sheet.frequency_sheet(0);
+
+        assert_eq!(freq.name, "color_freq");
+        assert_eq!(freq.num_cols(), 2);
+        assert_eq!(freq.num_rows(), 3); // blue, green, red (sorted by BTreeMap)
+
+        // BTreeMap sorts keys: blue, green, red
+        assert_eq!(freq.get_cell(0, 0), Value::Text("blue".into()));
+        assert_eq!(freq.get_cell(0, 1), Value::Int(1));
+        assert_eq!(freq.get_cell(1, 0), Value::Text("green".into()));
+        assert_eq!(freq.get_cell(1, 1), Value::Int(1));
+        assert_eq!(freq.get_cell(2, 0), Value::Text("red".into()));
+        assert_eq!(freq.get_cell(2, 1), Value::Int(3));
+    }
+
+    #[test]
+    fn frequency_sheet_empty() {
+        let sheet = Sheet::new("empty");
+        let freq = sheet.frequency_sheet(0);
+        assert_eq!(freq.num_rows(), 0);
     }
 }

@@ -9,5 +9,6 @@ workspace = true
 
 [dependencies]
 chrono = { workspace = true }
+regex = { workspace = true }
 thiserror = { workspace = true }
 unicode-width = { workspace = true }
