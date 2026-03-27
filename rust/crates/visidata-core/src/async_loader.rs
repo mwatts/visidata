@@ -116,8 +116,10 @@ pub enum LoadingState {
     Idle,
     /// Currently loading in the background.
     Loading {
-        /// Total rows loaded so far.
+        /// Rows loaded so far.
         rows_loaded: usize,
+        /// Estimated total rows (from file-size heuristic), if known.
+        rows_total: Option<usize>,
     },
     /// Loading completed.
     Complete {
@@ -138,7 +140,14 @@ impl LoadingState {
     pub fn status_text(&self) -> String {
         match self {
             Self::Idle => String::new(),
-            Self::Loading { rows_loaded } => format!(" loading... ({rows_loaded} rows)"),
+            Self::Loading { rows_loaded, rows_total: Some(total) } => {
+                #[expect(clippy::cast_precision_loss, reason = "pct display")]
+                #[expect(clippy::cast_possible_truncation, reason = "pct 0-100 fits usize")]
+                #[expect(clippy::cast_sign_loss, reason = "pct is non-negative")]
+                let pct = (*rows_loaded as f64 / *total as f64 * 100.0) as usize;
+                format!(" loading... {pct}% ({rows_loaded}/{total} rows)")
+            }
+            Self::Loading { rows_loaded, rows_total: None } => format!(" loading... ({rows_loaded} rows)"),
             Self::Complete { total_rows } => format!(" ({total_rows} rows loaded)"),
         }
     }
@@ -219,7 +228,7 @@ mod tests {
         assert!(idle.status_text().is_empty());
         assert!(!idle.is_loading());
 
-        let loading = LoadingState::Loading { rows_loaded: 42 };
+        let loading = LoadingState::Loading { rows_loaded: 42, rows_total: None };
         assert!(loading.status_text().contains("42"));
         assert!(loading.is_loading());
 

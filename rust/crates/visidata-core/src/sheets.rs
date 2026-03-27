@@ -1,15 +1,114 @@
 //! Built-in sheet types: `MetaSheet`, `DescribeSheet`, `DirSheet`, `TextSheet`.
 //!
-//! Each function builds a standard `Sheet` from a data source.
-//! `FrequencySheet` is already on `Sheet::frequency_sheet()` (Phase 5).
+//! Also contains `DrillAction` implementations for meta-sheets (GAP-078, 079, 081).
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::column::{Column, ColumnId, ColumnType};
 use crate::row::Row;
-use crate::sheet::Sheet;
+use crate::sheet::{DrillAction, Sheet};
 use crate::value::Value;
+
+// ── Drill actions for meta-sheets ────────────────────────────────────────────
+
+/// Drill on a frequency sheet: filters the source rows matching the freq group.
+#[derive(Debug)]
+pub struct FreqDrill {
+    /// Snapshot of source rows (cloned at freq-sheet creation time).
+    pub source_rows: Arc<Vec<Row>>,
+    /// Source column definitions (cloned).
+    pub source_columns: Arc<Vec<Column>>,
+    /// Column index (into `source_columns`) that was used for frequency.
+    pub col_idx: usize,
+    /// Source sheet name.
+    pub source_name: String,
+}
+
+impl DrillAction for FreqDrill {
+    fn open_row(&self, row: &Row) -> anyhow::Result<Sheet> {
+        // Column 0 of a frequency row holds the group value as text.
+        let target = match row.get(0) {
+            Value::Text(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let col = self.source_columns.get(self.col_idx)
+            .ok_or_else(|| anyhow::anyhow!("invalid column index"))?;
+        let filtered: Vec<Row> = self.source_rows.iter()
+            .filter(|r| col.display_value(r) == target)
+            .cloned()
+            .collect();
+        let sheet = Sheet::with_data(
+            format!("{}={target}", col.name),
+            (*self.source_columns).clone(),
+            filtered,
+        );
+        Ok(sheet)
+    }
+}
+
+/// Drill on the `ColumnsSheet`: opens a frequency table for the selected column.
+#[derive(Debug)]
+pub struct ColsDrill {
+    /// Snapshot of source rows.
+    pub source_rows: Arc<Vec<Row>>,
+    /// Source column definitions.
+    pub source_columns: Arc<Vec<Column>>,
+    /// Source sheet name.
+    pub source_name: String,
+}
+
+impl DrillAction for ColsDrill {
+    fn open_row(&self, row: &Row) -> anyhow::Result<Sheet> {
+        // Column 4 ("idx") of the columns sheet holds the column index.
+        #[expect(clippy::cast_possible_truncation, reason = "col index < usize::MAX")]
+        #[expect(clippy::cast_sign_loss, reason = "col index is non-negative")]
+        let col_idx = match row.get(4) {
+            Value::Int(i) => *i as usize,
+            _ => anyhow::bail!("expected column index in idx field"),
+        };
+        if col_idx >= self.source_columns.len() {
+            anyhow::bail!("column index out of range");
+        }
+        // Build frequency sheet for this column from the snapshot.
+        let tmp = Sheet::with_data(
+            &self.source_name,
+            (*self.source_columns).clone(),
+            (*self.source_rows).clone(),
+        );
+        Ok(tmp.frequency_sheet(col_idx))
+    }
+}
+
+/// Drill on the `DescribeSheet`: filters source rows with non-null values for that column.
+#[derive(Debug)]
+pub struct DescribeDrill {
+    pub source_rows: Arc<Vec<Row>>,
+    pub source_columns: Arc<Vec<Column>>,
+}
+
+impl DrillAction for DescribeDrill {
+    fn open_row(&self, row: &Row) -> anyhow::Result<Sheet> {
+        // Column 0 ("column") holds the column name.
+        let col_name = match row.get(0) {
+            Value::Text(s) => s.clone(),
+            _ => anyhow::bail!("expected column name"),
+        };
+        let col_idx = self.source_columns.iter().position(|c| c.name == col_name)
+            .ok_or_else(|| anyhow::anyhow!("column not found: {col_name}"))?;
+        let col = &self.source_columns[col_idx];
+        let filtered: Vec<Row> = self.source_rows.iter()
+            .filter(|r| !col.raw_value(r).is_null())
+            .cloned()
+            .collect();
+        Ok(Sheet::with_data(
+            format!("{col_name}_nonnull"),
+            (*self.source_columns).clone(),
+            filtered,
+        ))
+    }
+}
 
 // --- MetaSheet (Columns sheet) ---
 
@@ -46,7 +145,14 @@ pub fn columns_sheet(source: &Sheet) -> Sheet {
         })
         .collect();
 
-    Sheet::with_data(format!("{}_columns", source.name), columns, rows)
+    let mut sheet = Sheet::with_data(format!("{}_columns", source.name), columns, rows);
+    // Attach ColsDrill so Enter opens frequency table for the selected column (GAP-079).
+    sheet.drill = Some(Arc::new(ColsDrill {
+        source_rows: Arc::new(source.rows.clone()),
+        source_columns: Arc::new(source.columns.clone()),
+        source_name: source.name.clone(),
+    }));
+    sheet
 }
 
 // --- DescribeSheet (statistical summary) ---
@@ -149,7 +255,13 @@ pub fn describe_sheet(source: &Sheet) -> Sheet {
         })
         .collect();
 
-    Sheet::with_data(format!("{}_describe", source.name), columns, rows)
+    let mut sheet = Sheet::with_data(format!("{}_describe", source.name), columns, rows);
+    // Attach DescribeDrill so Enter opens filtered non-null rows (GAP-081).
+    sheet.drill = Some(Arc::new(DescribeDrill {
+        source_rows: Arc::new(source.rows.clone()),
+        source_columns: Arc::new(source.columns.clone()),
+    }));
+    sheet
 }
 
 // --- DirSheet (file browser) ---

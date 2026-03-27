@@ -144,6 +144,11 @@ pub struct Column {
     /// Whether this column is a key column (used for joins, grouping).
     pub is_key: bool,
 
+    /// Persistent aggregators assigned to this column (GAP-098).
+    ///
+    /// Set via `+`. Results shown in status bar and freq/pivot tables.
+    pub aggregators: Vec<crate::aggregation::AggFunc>,
+
     /// Rhai expression for lazy-evaluated computed columns (GAP-103).
     ///
     /// When set, `eval_expr_value` evaluates this expression per row at
@@ -172,6 +177,7 @@ impl Column {
             width: None,
             col_type: ColumnType::default(),
             is_key: false,
+            aggregators: Vec::new(),
             expr: None,
             fmt: None,
         }

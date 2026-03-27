@@ -621,7 +621,17 @@ impl Sheet {
             })
             .collect();
 
-        Self::with_data(format!("{}_freq", col.name), columns, rows)
+        let mut freq_sheet = Self::with_data(format!("{}_freq", col.name), columns, rows);
+        // Attach drill so Enter opens filtered source rows (GAP-078).
+        freq_sheet.drill = Some(std::sync::Arc::new(
+            crate::sheets::FreqDrill {
+                source_rows: std::sync::Arc::new(self.rows.clone()),
+                source_columns: std::sync::Arc::new(self.columns.clone()),
+                col_idx,
+                source_name: self.name.clone(),
+            }
+        ));
+        freq_sheet
     }
 
     // --- Editing ---

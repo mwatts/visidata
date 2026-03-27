@@ -54,15 +54,31 @@ impl Loader for JsonLoader {
 fn load_json(name: &str, content: &str) -> Result<Sheet> {
     let parsed: JsonValue = serde_json::from_str(content).context("failed to parse JSON")?;
 
-    let arr = match parsed {
-        JsonValue::Array(a) => a,
-        other => {
-            // Wrap non-array in a single-row sheet
-            vec![other]
+    match parsed {
+        // Array of objects → standard tabular sheet
+        JsonValue::Array(ref a) if a.iter().all(serde_json::Value::is_object) => {
+            Ok(objects_to_sheet(name, a))
         }
-    };
-
-    Ok(objects_to_sheet(name, &arr))
+        // Array of arrays → sequence sheet (row 0 = headers if all strings, else row indices)
+        JsonValue::Array(ref a) if a.iter().all(serde_json::Value::is_array) => {
+            Ok(array_of_arrays_to_sheet(name, a))
+        }
+        // Array of mixed or scalar → one column "value"
+        JsonValue::Array(ref a) => {
+            let columns = vec![Column::new(ColumnId(0), "value", 0)];
+            let rows: Vec<Row> = a.iter()
+                .map(|v| Row::new(vec![json_value_to_value(v)]))
+                .collect();
+            Ok(Sheet::with_data(name, columns, rows))
+        }
+        // Single object → one row
+        JsonValue::Object(_) => Ok(objects_to_sheet(name, &[parsed])),
+        // Scalar → single cell
+        other => {
+            let columns = vec![Column::new(ColumnId(0), "value", 0)];
+            Ok(Sheet::with_data(name, columns, vec![Row::new(vec![json_value_to_value(&other)])]))
+        }
+    }
 }
 
 /// Load JSONL (one object per line, skipping `#` comments and blank lines).
@@ -124,6 +140,35 @@ fn objects_to_sheet(name: &str, objects: &[JsonValue]) -> Sheet {
         })
         .collect();
 
+    Sheet::with_data(name, columns, rows)
+}
+
+/// Convert an array-of-arrays to a Sheet.
+///
+/// If the first row is all strings it is treated as column headers;
+/// otherwise column indices (0, 1, 2, …) are used.
+fn array_of_arrays_to_sheet(name: &str, arr: &[JsonValue]) -> Sheet {
+    if arr.is_empty() {
+        return Sheet::new(name);
+    }
+    let first = arr[0].as_array().map(Vec::as_slice).unwrap_or_default();
+    let (headers, data): (Vec<String>, &[JsonValue]) =
+        if first.iter().all(serde_json::Value::is_string) {
+            let h = first.iter().map(|v| v.as_str().unwrap_or("").to_owned()).collect();
+            (h, &arr[1..])
+        } else {
+            let h = (0..first.len()).map(|i| i.to_string()).collect();
+            (h, arr)
+        };
+    let columns: Vec<Column> = headers.iter().enumerate()
+        .map(|(i, h)| Column::new(ColumnId(i), h.as_str(), i))
+        .collect();
+    let rows: Vec<Row> = data.iter().map(|row| {
+        let vals: Vec<Value> = row.as_array()
+            .map(|a| a.iter().map(json_value_to_value).collect())
+            .unwrap_or_default();
+        Row::new(vals)
+    }).collect();
     Sheet::with_data(name, columns, rows)
 }
 

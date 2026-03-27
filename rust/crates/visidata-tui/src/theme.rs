@@ -168,6 +168,67 @@ impl Theme {
         }
     }
 
+    /// Build a theme from runtime options (GAP-107).
+    ///
+    /// Reads `color_selected_row`, `color_cursor_row`, `color_key_col`,
+    /// `color_header` from `opts`, overriding the default theme's colours.
+    #[must_use]
+    pub fn from_options(opts: &visidata_core::options::OptionsManager) -> Self {
+        let mut theme = Self::default_theme();
+        if let visidata_core::Value::Text(ref s) = opts.get_global("color_selected_row")
+            && let Some(style) = parse_color_option(s) {
+                theme.row_selected = style;
+            }
+        if let visidata_core::Value::Text(ref s) = opts.get_global("color_cursor_row")
+            && let Some(style) = parse_color_option(s) {
+                theme.row_cursor = style;
+            }
+        if let visidata_core::Value::Text(ref s) = opts.get_global("color_key_col")
+            && let Some(style) = parse_color_option(s) {
+                theme.col_key = style;
+            }
+        if let visidata_core::Value::Text(ref s) = opts.get_global("color_header")
+            && let Some(style) = parse_color_option(s) {
+                theme.header = style;
+            }
+        theme
+    }
+}
+
+/// Parse a simple color option string into a ratatui `Style`.
+///
+/// Supports: `"cyan"`, `"bold"`, `"reverse"`, `"normal"`, `"bold underline"`,
+/// and combinations separated by spaces.
+fn parse_color_option(s: &str) -> Option<Style> {
+    let mut style = Style::default();
+    let mut any = false;
+    for token in s.split_whitespace() {
+        any = true;
+        style = match token.to_lowercase().as_str() {
+            "bold"        => style.bold(),
+            "italic"      => style.italic(),
+            "underline" | "underlined" => style.underlined(),
+            "reverse" | "reversed"     => style.reversed(),
+            "normal"      => Style::default(),
+            "cyan"        => style.fg(Color::Cyan),
+            "green"       => style.fg(Color::Green),
+            "yellow"      => style.fg(Color::Yellow),
+            "red"         => style.fg(Color::Red),
+            "blue"        => style.fg(Color::Blue),
+            "magenta"     => style.fg(Color::Magenta),
+            "white"       => style.fg(Color::White),
+            "black"       => style.fg(Color::Black),
+            "on_cyan"     => style.bg(Color::Cyan),
+            "on_green"    => style.bg(Color::Green),
+            "on_black"    => style.bg(Color::Black),
+            "on_blue"     => style.bg(Color::Blue),
+            _             => style,
+        };
+    }
+    if any { Some(style) } else { None }
+}
+
+impl Theme {
     /// Resolve the style for a data cell based on its context.
     #[must_use]
     pub const fn cell_style(&self, ctx: &CellContext) -> Style {

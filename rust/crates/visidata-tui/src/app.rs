@@ -108,6 +108,8 @@ enum InputMode {
     SelectColRegex { editor: LineEditor, select: bool },
     /// Select/unselect rows matching regex in any visible column (`g|` / `g\`).
     SelectAllColsRegex { editor: LineEditor, select: bool },
+    /// Name a just-recorded macro.
+    NameMacroInput(LineEditor),
     /// Go to row by number (`zr`).
     GotoRow(LineEditor),
     /// Go to column by regex name match (`c`).
@@ -241,7 +243,7 @@ impl App {
             clipboard: Clipboard::new(),
             pending_prefix: None::<String>,
             macro_recorder: visidata_core::macros::MacroRecorder::new(),
-            macro_store: visidata_core::macros::MacroStore::new(),
+            macro_store: visidata_core::macros::MacroStore::load_from_disk().unwrap_or_default(),
             macro_replay: vec![],
             redo_stack: vec![],
             prev_sheet_idx: None,
@@ -310,6 +312,7 @@ impl App {
                         | InputMode::SearchBackwardAllCols(_)
                         | InputMode::SelectColRegex { .. }
                         | InputMode::SelectAllColsRegex { .. }
+                        | InputMode::NameMacroInput(_)
                         | InputMode::GotoRow(_)
                         | InputMode::GotoColRegex(_)
                         | InputMode::GotoColNumber(_)
@@ -350,7 +353,7 @@ impl App {
                     if let Some(sheet) = self.stack.active_mut() {
                         let count = rows.len();
                         sheet.rows.extend(rows);
-                        if let LoadingState::Loading { rows_loaded } = &mut sheet.loading_state {
+                        if let LoadingState::Loading { rows_loaded, .. } = &mut sheet.loading_state {
                             *rows_loaded += count;
                         }
                     }
@@ -386,7 +389,8 @@ impl App {
 
     /// Draw the current state to the terminal frame.
     fn draw(&mut self, frame: &mut Frame<'_>) {
-        // Sync theme from options each frame (GAP-122)
+        // Sync theme from options each frame (GAP-122 + GAP-107)
+        self.theme = Theme::from_options(&self.options);
         if let visidata_core::Value::Text(ref name) = self.options.get_global("theme") {
             let name = name.clone();
             self.theme = Theme::by_name(&name);
@@ -420,6 +424,7 @@ impl App {
                     let prefix = if *select { "g|" } else { "g\\" };
                     Some(format!("{prefix}{}", editor.text()))
                 }
+                InputMode::NameMacroInput(editor) => Some(format!("name macro: {}", editor.text())),
                 InputMode::GotoRow(editor) => Some(format!("go to row: {}", editor.text())),
                 InputMode::GotoColRegex(editor) => Some(format!("go to column: {}", editor.text())),
                 InputMode::GotoColNumber(editor) => Some(format!("go to column #: {}", editor.text())),
@@ -499,6 +504,26 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
             self.save_current_sheet();
             return;
+        }
+
+        // Ctrl+Right / Ctrl+Left = scroll columns by page (GAP-010)
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            if key.code == KeyCode::Right {
+                if let Some(s) = self.stack.active_mut() {
+                    s.left_col = (s.left_col + 5).min(s.visible_columns().len().saturating_sub(1));
+                    s.cursor_col = s.left_col;
+                }
+                self.update_status();
+                return;
+            }
+            if key.code == KeyCode::Left {
+                if let Some(s) = self.stack.active_mut() {
+                    s.left_col = s.left_col.saturating_sub(5);
+                    s.cursor_col = s.left_col;
+                }
+                self.update_status();
+                return;
+            }
         }
 
         // Ctrl+L = redraw
@@ -902,8 +927,23 @@ impl App {
             // Cursor movement
             KeyCode::Down | KeyCode::Char('j') => sheet.cursor_down(1),
             KeyCode::Up | KeyCode::Char('k') => sheet.cursor_up(1),
-            KeyCode::Right | KeyCode::Char('l') => sheet.cursor_right(1),
-            KeyCode::Left | KeyCode::Char('h') => sheet.cursor_left(1),
+            KeyCode::Right | KeyCode::Char('l') => {
+                sheet.cursor_right(1);
+                // Scroll right if cursor moves past visible columns (GAP-010)
+                let vis_count = sheet.visible_columns().len();
+                let view_cols = 8usize; // conservative default; renderer uses actual widths
+                let view_right = sheet.left_col + view_cols.min(vis_count);
+                if sheet.cursor_col >= view_right && sheet.left_col + 1 < vis_count {
+                    sheet.left_col += 1;
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                sheet.cursor_left(1);
+                // Scroll left if cursor moves before left_col (GAP-010)
+                if sheet.cursor_col < sheet.left_col {
+                    sheet.left_col = sheet.cursor_col;
+                }
+            }
 
             // Page movement
             KeyCode::PageDown => sheet.cursor_down(height.saturating_sub(2)),
@@ -1260,12 +1300,9 @@ impl App {
 
             // --- Aggregation ---
             KeyCode::Char('+') => {
-                let vis = sheet.visible_columns();
-                if let Some(&col) = vis.get(sheet.cursor_col) {
-                    let summary = visidata_core::aggregation::aggregate_summary(col, &sheet.rows);
-                    self.status = summary;
-                }
-                return; // don't overwrite status
+                // Open palette for aggregator selection (GAP-098)
+                self.mode = InputMode::CommandPalette(LineEditor::new("add-agg:"));
+                return;
             }
 
             // --- Expression column ---
@@ -1374,7 +1411,19 @@ impl App {
             }
             InputMode::EditCell(mut editor) => match editor.handle_key(&key_str) {
                 EditResult::Accept(new_value) => {
-                    if let Some(sheet) = self.stack.active_mut() {
+                    // Options sheet write-back (GAP-082)
+                    let is_options = self.stack.active()
+                        .is_some_and(|s| s.name == "options" || s.name.ends_with(']'));
+                    if is_options {
+                        // Column 0 = option name; cursor on column 1 = value
+                        if let Some(sheet) = self.stack.active()
+                            && let Some(opt_name_val) = sheet.rows.get(sheet.cursor_row).map(|r| r.get(0).clone())
+                                && let visidata_core::Value::Text(ref opt_name) = opt_name_val {
+                                    let opt_name = opt_name.clone();
+                                    self.options.set_global(&opt_name, visidata_core::Value::Text(new_value));
+                                    self.status = format!("set {opt_name}");
+                                }
+                    } else if let Some(sheet) = self.stack.active_mut() {
                         let vis = sheet.visible_columns();
                         if let Some(&col) = vis.get(sheet.cursor_col) {
                             let col_source_idx = col.source_idx;
@@ -1518,6 +1567,22 @@ impl App {
                 EditResult::Continue => {
                     self.mode = InputMode::CommandPalette(editor);
                 }
+            },
+            InputMode::NameMacroInput(mut editor) => match editor.handle_key(&key_str) {
+                EditResult::Accept(name) => {
+                    let name = if name.trim().is_empty() { "last".into() } else { name.trim().to_owned() };
+                    // Rename the "last" macro to the given name
+                    if let Some(mac) = self.macro_store.get("last").cloned() {
+                        let mut named = mac;
+                        named.name.clone_from(&name);
+                        self.macro_store.save(named);
+                    }
+                    let _ = self.macro_store.save_to_disk();
+                    self.status = format!("macro saved as '{name}'");
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Cancel => self.mode = InputMode::Normal,
+                EditResult::Continue => self.mode = InputMode::NameMacroInput(editor),
             },
             InputMode::GotoRow(mut editor) => match editor.handle_key(&key_str) {
                 EditResult::Accept(s) => {
@@ -1844,6 +1909,65 @@ impl App {
             }
         }
 
+        // replay: (GAP-128) — load and replay a .vdj command log
+        if let Some(path_str) = query.strip_prefix("replay:") {
+            let path = std::path::Path::new(path_str.trim());
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    match serde_json::from_str::<Vec<serde_json::Value>>(&content) {
+                        Ok(entries) => {
+                            let cmds: Vec<String> = entries.iter()
+                                .filter_map(|v| v[0].as_str().map(str::to_owned))
+                                .collect();
+                            self.macro_replay = cmds;
+                            self.status = format!("replaying {} commands from {path_str}", self.macro_replay.len());
+                        }
+                        Err(e) => self.status = format!("invalid .vdj: {e}"),
+                    }
+                }
+                Err(e) => self.status = format!("cannot read {path_str}: {e}"),
+            }
+            return;
+        }
+
+        // add-agg: (`+` key) — add aggregator to current column and show result
+        if let Some(func_name) = query.strip_prefix("add-agg:") {
+            if let Some(sheet) = self.stack.active_mut()
+                && let Some(col_idx) = resolve_cursor_col_idx(sheet)
+            {
+                if let Some(f) = visidata_core::aggregation::AggFunc::from_name(func_name) {
+                    sheet.columns[col_idx].aggregators.push(f);
+                    let val = visidata_core::aggregation::aggregate(&sheet.columns[col_idx], &sheet.rows, f);
+                    self.status = format!("{func_name}={val}");
+                } else if func_name.is_empty() {
+                    // No name entered — show current summary
+                    let col = &sheet.columns[col_idx];
+                    self.status = visidata_core::aggregation::aggregate_summary(col, &sheet.rows);
+                } else {
+                    self.status = format!("unknown aggregator: {func_name}");
+                }
+            }
+            return;
+        }
+
+        // sql: — run arbitrary SQL on the active ext-loader sheet (GAP-134)
+        if let Some(sql) = query.strip_prefix("sql:") {
+            // Detect ext-loader sheet by checking if the source has an ext-loader registered.
+            if let Some(sheet) = self.stack.active()
+                && let Some(ref src) = sheet.source {
+                    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                    let registry = visidata_loaders::LoaderRegistry::with_builtins();
+                    if let Some(ext_loader) = registry.find_ext_loader(&ext) {
+                        let opts = self.loader_options_snapshot();
+                        match ext_loader.run_query(src, Some(sql), opts.ext_options.iter().map(|(k,v)| (k.clone(), serde_json::Value::String(v.clone()))).collect()) {
+                            Ok(result) => self.stack.push(result),
+                            Err(e) => self.status = format!("sql error: {e}"),
+                        }
+                    }
+                }
+            return;
+        }
+
         // memo-agg: (`z+` key) — show one aggregation in status
         if let Some(func_name) = query.strip_prefix("memo-agg:") {
             if let Some(sheet) = self.stack.active()
@@ -1902,7 +2026,32 @@ impl App {
                 }
             }
             "open-row" => {
-                // Clone the drill Arc and cursor row before any mutable borrow.
+                // SheetsSheet special-case (GAP-080): navigate to the named sheet.
+                let sheets_nav = self.stack.active().and_then(|s| {
+                    if !s.name.ends_with("_sheets") && s.name != "sheets" && s.name != "sheets_all" {
+                        return None;
+                    }
+                    let target_name = match s.rows.get(s.cursor_row)?.get(0) {
+                        visidata_core::Value::Text(t) => t.clone(),
+                        _ => return None,
+                    };
+                    Some(target_name)
+                });
+                if let Some(target) = sheets_nav {
+                    // Find target sheet in stack and pop back to it.
+                    let idx = self.stack.iter().position(|s| s.name == target);
+                    if let Some(pos) = idx {
+                        while self.stack.len() > pos + 1 {
+                            self.stack.pop();
+                        }
+                    } else {
+                        self.status = format!("sheet '{target}' not in stack");
+                    }
+                    self.update_status();
+                    return;
+                }
+
+                // Normal drill: clone Arc + row before mutable borrow.
                 let maybe = self.stack.active().and_then(|s| {
                     let drill = s.drill.clone()?;
                     let row = s.rows.get(s.cursor_row).cloned()?;
@@ -2094,11 +2243,14 @@ impl App {
             "macro-record-toggle" => {
                 if self.macro_recorder.is_recording() {
                     if let Some(mac) = self.macro_recorder.stop("last") {
-                        self.status = format!("recorded {} keystrokes", mac.keystrokes.len());
+                        let n = mac.keystrokes.len();
                         self.macro_store.save(mac);
-                    } else {
-                        self.status = "nothing recorded".into();
+                        // Prompt for a name (GAP-127)
+                        self.mode = InputMode::NameMacroInput(LineEditor::new("last"));
+                        self.status = format!("recorded {n} keystrokes — enter name (Enter=keep 'last')");
+                        return;
                     }
+                    self.status = "nothing recorded".into();
                 } else {
                     self.macro_recorder.start();
                     self.status = "recording...".into();
@@ -3104,8 +3256,18 @@ impl App {
             // Loading indicator
             let load_text = sheet.loading_state.status_text();
 
+            // Aggregator indicator (GAP-123)
+            let agg_text = sheet.current_column()
+                .and_then(|col| col.aggregators.first().copied())
+                .map(|f| {
+                    let col = sheet.current_column().unwrap();
+                    let val = visidata_core::aggregation::aggregate(col, &sheet.rows, f);
+                    format!(" {}={val}", f.name())
+                })
+                .unwrap_or_default();
+
             self.status = format!(
-                "{}{mod_indicator}{load_text} | {}r x {}c | row {} col {} {type_indicator}{}",
+                "{}{mod_indicator}{load_text} | {}r x {}c | row {} col {} {type_indicator}{}{agg_text}",
                 sheet.name,
                 sheet.num_rows(),
                 sheet.visible_columns().len(),

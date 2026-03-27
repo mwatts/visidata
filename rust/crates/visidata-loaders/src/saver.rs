@@ -25,6 +25,7 @@ pub fn save_sheet(sheet: &Sheet, path: &Path) -> Result<()> {
         "yaml" | "yml" => save_yaml(sheet, path),
         "htm" | "html" => save_html(sheet, path),
         "parquet" => save_parquet(sheet, path),
+        "sqlite" | "db" | "sqlite3" => save_sqlite(sheet, path),
         _ => anyhow::bail!("no saver for extension: .{ext}"),
     }
 }
@@ -218,6 +219,37 @@ fn save_parquet(sheet: &Sheet, path: &Path) -> Result<()> {
         .context("failed to create Parquet writer")?;
     writer.write(&batch).context("failed to write Parquet batch")?;
     writer.close().context("failed to close Parquet writer")?;
+    Ok(())
+}
+
+/// Save a sheet to a `SQLite` database, replacing any existing table of the same name.
+fn save_sqlite(sheet: &Sheet, path: &Path) -> Result<()> {
+    let conn = rusqlite::Connection::open(path)
+        .with_context(|| format!("failed to open SQLite at {}", path.display()))?;
+    let visible = sheet.visible_columns();
+    let table = sheet.name.replace('"', "");
+    conn.execute_batch(&format!("DROP TABLE IF EXISTS \"{table}\""))
+        .context("DROP TABLE failed")?;
+    let col_defs: String = visible.iter()
+        .map(|c| format!("\"{}\" TEXT", c.name.replace('"', "")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    conn.execute_batch(&format!("CREATE TABLE \"{table}\" ({col_defs})"))
+        .context("CREATE TABLE failed")?;
+    let placeholders = vec!["?"; visible.len()].join(", ");
+    let col_names: String = visible.iter()
+        .map(|c| format!("\"{}\"", c.name.replace('"', "")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let insert_sql = format!("INSERT INTO \"{table}\" ({col_names}) VALUES ({placeholders})");
+    let mut stmt = conn.prepare(&insert_sql).context("prepare INSERT failed")?;
+    for row in &sheet.rows {
+        let params: Vec<rusqlite::types::ToSqlOutput<'_>> = visible.iter()
+            .map(|col| rusqlite::types::ToSqlOutput::from(col.display_value(row)))
+            .collect();
+        stmt.execute(rusqlite::params_from_iter(params.iter()))
+            .context("INSERT row failed")?;
+    }
     Ok(())
 }
 

@@ -58,7 +58,7 @@ pub fn draw_sheet(
     };
 
     // Show a loading gauge when loading, otherwise the normal status bar.
-    if let LoadingState::Loading { rows_loaded } = &sheet.loading_state {
+    if let LoadingState::Loading { rows_loaded, .. } = &sheet.loading_state {
         #[expect(
             clippy::cast_precision_loss,
             reason = "visual-only gauge ratio; precision not critical"
@@ -87,10 +87,13 @@ pub fn draw_sheet(
 )]
 #[expect(clippy::too_many_lines, reason = "renderer — splitting would not improve clarity")]
 fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme, engine: &rhai::Engine) {
-    let visible_cols = sheet.visible_columns();
-    if visible_cols.is_empty() {
+    let all_visible = sheet.visible_columns();
+    if all_visible.is_empty() {
         return;
     }
+    // Respect left_col scroll offset (GAP-010): slice off columns to the left.
+    let left = sheet.left_col.min(all_visible.len().saturating_sub(1));
+    let visible_cols: Vec<&visidata_core::Column> = all_visible[left..].to_vec();
 
     // Build per-column metadata: whether there are hidden cols before each visible col (GAP-124)
     let all_cols = &sheet.columns;
@@ -136,7 +139,7 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme, e
         .iter()
         .enumerate()
         .map(|(vi, col)| {
-            let style = theme.header_style(col.is_key, vi == sheet.cursor_col);
+            let style = theme.header_style(col.is_key, vi + left == sheet.cursor_col);
             let label = if *has_hidden_before.get(vi).unwrap_or(&false) {
                 format!("…{}", col.name)
             } else {
@@ -185,7 +188,7 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme, e
 
                     let is_cursor_row = row_idx == sheet.cursor_row;
                     let ctx = CellContext {
-                        is_cursor_cell: is_cursor_row && vi == sheet.cursor_col,
+                        is_cursor_cell: is_cursor_row && vi + left == sheet.cursor_col,
                         is_cursor_row,
                         is_selected: row.selected,
                         is_key_col: col.is_key,

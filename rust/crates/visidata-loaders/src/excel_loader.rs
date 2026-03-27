@@ -1,12 +1,47 @@
 //! Excel file loader (.xlsx, .xls, .ods).
+//!
+//! When the workbook has multiple sheets an index sheet is returned with an
+//! `ExcelDrill` drill-action so the user can open individual sheets via Enter.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use calamine::{Data, Reader, open_workbook_auto};
-use visidata_core::{Column, ColumnId, Row, Sheet, Value};
+use visidata_core::{Column, ColumnId, DrillAction, Row, Sheet, Value};
 
 use crate::registry::Loader;
+
+/// Drill-action for navigating to a named worksheet inside an Excel file.
+/// Used by single-worksheet links; reads `sheet_name` from `self`.
+#[derive(Debug)]
+#[expect(dead_code, reason = "available for external callers; constructed via API")]
+pub struct ExcelDrill {
+    pub path: PathBuf,
+    pub sheet_name: String,
+}
+
+impl DrillAction for ExcelDrill {
+    fn open_row(&self, _row: &visidata_core::Row) -> anyhow::Result<Sheet> {
+        load_worksheet(&self.path, &self.sheet_name)
+    }
+}
+
+/// Drill-action for the index sheet — reads sheet name from row column 0.
+#[derive(Debug)]
+struct ExcelIndexDrill {
+    path: PathBuf,
+}
+
+impl DrillAction for ExcelIndexDrill {
+    fn open_row(&self, row: &visidata_core::Row) -> anyhow::Result<Sheet> {
+        let sheet_name = match row.get(0) {
+            Value::Text(s) => s.clone(),
+            other => anyhow::bail!("expected sheet name in column 0, got {other:?}"),
+        };
+        load_worksheet(&self.path, &sheet_name)
+    }
+}
 
 /// Loader for Excel files using the `calamine` crate.
 ///
@@ -37,40 +72,37 @@ impl Loader for ExcelLoader {
             return Ok(sheet);
         }
 
-        // Load the first worksheet.
-        let first_sheet = sheet_names[0].clone();
-        let range = workbook
-            .worksheet_range(&first_sheet)
-            .with_context(|| format!("failed to read worksheet: {first_sheet}"))?;
+        // Single sheet → load directly; multiple sheets → index sheet with drill.
+        if sheet_names.len() == 1 {
+            let mut s = load_worksheet(path, &sheet_names[0])?;
+            s.source = Some(path.to_path_buf());
+            return Ok(s);
+        }
 
-        let mut rows_iter = range.rows();
+        // Build index sheet: columns "name" and "rows".
+        let columns = vec![
+            Column::new(ColumnId(0), "name", 0),
+            Column::new(ColumnId(1), "rows", 1),
+        ];
+        let rows: Vec<Row> = sheet_names.iter().map(|sn| {
+            let row_count = workbook.worksheet_range(sn)
+                .map(|r| r.height().saturating_sub(1))
+                .unwrap_or(0);
+            #[expect(clippy::cast_possible_wrap, reason = "row count < i64::MAX")]
+            Row::new(vec![
+                Value::Text(sn.clone()),
+                Value::Int(row_count as i64),
+            ])
+        }).collect();
 
-        // First row is treated as headers.
-        let Some(header_row) = rows_iter.next() else {
-            let mut sheet = Sheet::with_data(&name, vec![], vec![]);
-            sheet.source = Some(path.to_path_buf());
-            return Ok(sheet);
-        };
-
-        let columns: Vec<Column> = header_row
-            .iter()
-            .enumerate()
-            .map(|(i, cell)| {
-                let col_name = cell_to_string(cell);
-                Column::new(ColumnId(i), &col_name, i)
-            })
-            .collect();
-
-        let rows: Vec<Row> = rows_iter
-            .map(|row| {
-                let values: Vec<Value> = row.iter().map(cell_to_value).collect();
-                Row::new(values)
-            })
-            .collect();
-
-        let mut sheet = Sheet::with_data(&name, columns, rows);
-        sheet.source = Some(path.to_path_buf());
-        Ok(sheet)
+        let mut index = Sheet::with_data(&name, columns, rows);
+        index.source = Some(path.to_path_buf());
+        // Each row drills into its named worksheet.
+        // ExcelDrill.open_row receives the row but uses its own sheet_name.
+        // We need per-row drills — store path+name in each row and use a custom drill.
+        // Use a shared drill that reads the sheet name from column 0.
+        index.drill = Some(Arc::new(ExcelIndexDrill { path: path.to_path_buf() }));
+        Ok(index)
     }
 }
 

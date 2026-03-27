@@ -7,6 +7,8 @@ pub struct Macro {
     pub name: String,
     /// Recorded keystrokes (each is a key string like "j", "Enter", "Ctrl+Z").
     pub keystrokes: Vec<String>,
+    /// Optional trigger keystroke (e.g. "@1") to replay this macro directly.
+    pub trigger_key: Option<String>,
 }
 
 impl Macro {
@@ -16,6 +18,7 @@ impl Macro {
         Self {
             name: name.into(),
             keystrokes,
+            trigger_key: None,
         }
     }
 }
@@ -127,6 +130,52 @@ impl MacroStore {
     pub const fn is_empty(&self) -> bool {
         self.macros.is_empty()
     }
+
+    /// Persist macros to `~/.config/vd/macros.json`.
+    ///
+    /// # Errors
+    /// Returns an error if the file cannot be written.
+    pub fn save_to_disk(&self) -> anyhow::Result<()> {
+        let Some(dir) = macro_dir() else { return Ok(()); };
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("macros.json");
+        let json: Vec<serde_json::Value> = self.macros.iter().map(|m| {
+            serde_json::json!({
+                "name": m.name,
+                "keystrokes": m.keystrokes,
+                "trigger_key": m.trigger_key,
+            })
+        }).collect();
+        std::fs::write(&path, serde_json::to_string_pretty(&json)?)?;
+        Ok(())
+    }
+
+    /// Load macros from `~/.config/vd/macros.json`.
+    ///
+    /// # Errors
+    /// Returns an error if the file exists but cannot be parsed.
+    pub fn load_from_disk() -> anyhow::Result<Self> {
+        let Some(dir) = macro_dir() else { return Ok(Self::new()); };
+        let path = dir.join("macros.json");
+        if !path.exists() { return Ok(Self::new()); }
+        let content = std::fs::read_to_string(&path)?;
+        let arr: Vec<serde_json::Value> = serde_json::from_str(&content)?;
+        let macros = arr.iter().filter_map(|v| {
+            let name = v["name"].as_str()?.to_owned();
+            let keystrokes: Vec<String> = v["keystrokes"]
+                .as_array()?
+                .iter()
+                .filter_map(|k| k.as_str().map(str::to_owned))
+                .collect();
+            let trigger_key = v["trigger_key"].as_str().map(str::to_owned);
+            Some(Macro { name, keystrokes, trigger_key })
+        }).collect();
+        Ok(Self { macros })
+    }
+}
+
+fn macro_dir() -> Option<std::path::PathBuf> {
+    dirs::config_dir().map(|d| d.join("vd"))
 }
 
 #[cfg(test)]
