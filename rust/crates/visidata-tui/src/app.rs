@@ -204,6 +204,17 @@ pub struct App {
 }
 
 impl App {
+    /// Create a new app with an initial sheet and pre-configured options.
+    ///
+    /// Used by `main` to pass in options that were loaded from config before
+    /// the initial file was opened (so loader options apply to the first load).
+    #[must_use]
+    pub fn new_with_options(sheet: Sheet, options: visidata_core::options::OptionsManager) -> Self {
+        let mut app = Self::new(sheet);
+        app.options = options;
+        app
+    }
+
     /// Create a new app with an initial sheet.
     #[must_use]
     pub fn new(sheet: Sheet) -> Self {
@@ -375,6 +386,8 @@ impl App {
             let name = name.clone();
             self.theme = Theme::by_name(&name);
         }
+        // Apply display formats from options to active sheet (GAP-106)
+        self.apply_display_formats_from_options();
         let area = frame.area();
 
         if let Some(sheet) = self.stack.active() {
@@ -563,6 +576,10 @@ impl App {
                         s.top_row = 0;
                     }
                     self.update_status();
+                    return;
+                }
+                ("g", KeyCode::Char('a')) => {
+                    self.mode = InputMode::AddRowsInput(LineEditor::new("1"));
                     return;
                 }
                 ("g", KeyCode::Char('A')) => {
@@ -3075,6 +3092,31 @@ impl App {
         }
     }
 
+    /// Apply display format strings from options to all columns of the active sheet.
+    ///
+    /// Called after loading a sheet or after options change (GAP-106).
+    fn apply_display_formats_from_options(&mut self) {
+        let float_fmt = match self.options.get_global("disp_float_fmt") {
+            visidata_core::Value::Text(ref s) if !s.is_empty() => Some(s.clone()),
+            _ => None,
+        };
+        let int_fmt = match self.options.get_global("disp_int_fmt") {
+            visidata_core::Value::Text(ref s) if !s.is_empty() => Some(s.clone()),
+            _ => None,
+        };
+        let date_fmt = match self.options.get_global("disp_date_fmt") {
+            visidata_core::Value::Text(ref s) if !s.is_empty() => Some(s.clone()),
+            _ => None,
+        };
+        if let Some(sheet) = self.stack.active_mut() {
+            sheet.apply_display_formats(
+                float_fmt.as_deref(),
+                int_fmt.as_deref(),
+                date_fmt.as_deref(),
+            );
+        }
+    }
+
     /// Join the top two sheets with the given join type.
     fn join_with_type(&mut self, join_type: visidata_core::sheets::JoinType) {
         let sheets: Vec<&Sheet> = self.stack.iter().collect();
@@ -3302,6 +3344,32 @@ impl App {
         let _ = std::fs::remove_file(&tmp);
     }
 
+    /// Build a `LoaderOptions` snapshot from current app options (GAP-105, 135).
+    fn loader_options_snapshot(&self) -> visidata_loaders::LoaderOptions {
+        let csv_delimiter = match self.options.get_global("csv_delimiter") {
+            visidata_core::Value::Text(ref s) => s.bytes().next().unwrap_or(b','),
+            _ => b',',
+        };
+        let csv_quote_char = match self.options.get_global("csv_quotechar") {
+            visidata_core::Value::Text(ref s) => s.bytes().next().unwrap_or(b'"'),
+            _ => b'"',
+        };
+        // Collect ext-loader options: any option whose key starts with "vd_"
+        let ext_options = self.options
+            .all_definitions()
+            .into_iter()
+            .filter(|d| d.name.starts_with("vd_"))
+            .filter_map(|d| {
+                if let visidata_core::Value::Text(ref v) = self.options.get_global(&d.name) {
+                    Some((d.name.clone(), v.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        visidata_loaders::LoaderOptions { csv_delimiter, csv_quote_char, ext_options }
+    }
+
     /// Reload the current sheet from its source file.
     fn reload_current_sheet(&mut self) {
         let source = self.stack.active().and_then(|s| s.source.clone());
@@ -3310,7 +3378,8 @@ impl App {
             return;
         };
         let registry = visidata_loaders::LoaderRegistry::with_builtins();
-        match registry.load_file(&path) {
+        let opts = self.loader_options_snapshot();
+        match registry.load_file_with_options(&path, &opts) {
             Ok(new_sheet) => {
                 if let Some(sheet) = self.stack.active_mut() {
                     let name = sheet.name.clone();

@@ -143,6 +143,15 @@ pub struct Column {
 
     /// Whether this column is a key column (used for joins, grouping).
     pub is_key: bool,
+
+    /// Optional display format string sourced from options.
+    ///
+    /// - Float/Currency: printf-style `"%.2f"` → 2 decimal places
+    /// - Date: strftime pattern e.g. `"%Y-%m-%d"`
+    /// - Int/others: ignored (default formatting used)
+    ///
+    /// `None` means use the hardcoded default.
+    pub fmt: Option<String>,
 }
 
 impl Column {
@@ -156,6 +165,7 @@ impl Column {
             width: None,
             col_type: ColumnType::default(),
             is_key: false,
+            fmt: None,
         }
     }
 
@@ -173,9 +183,31 @@ impl Column {
     }
 
     /// Returns the display string for this column's value in the given row.
+    ///
+    /// If `self.fmt` is set, it is applied according to `self.col_type`:
+    /// - `Float`/`Currency`: `"%.Nf"` → N decimal places
+    /// - `Date`: passed to chrono `strftime`
+    /// - Others: `fmt` is ignored
     #[must_use]
     pub fn display_value(&self, row: &Row) -> String {
         let typed = self.typed_value(row);
+        if let Some(ref fmt) = self.fmt {
+            match &typed {
+                Value::Float(f) => return apply_float_fmt(fmt, *f),
+                Value::Date(d) => {
+                    use chrono::format::strftime::StrftimeItems;
+                    let items: Vec<_> = StrftimeItems::new(fmt).collect();
+                    return d.format_with_items(items.iter()).to_string();
+                }
+                Value::Int(n) => {
+                    // "%d" is the only common int format; treat as default
+                    if fmt == "%d" || fmt == "%i" {
+                        return n.to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
         typed.to_string()
     }
 
@@ -184,6 +216,25 @@ impl Column {
     pub fn is_hidden(&self) -> bool {
         self.width == Some(0)
     }
+}
+
+/// Apply a printf-style float format string (`"%.Nf"`) to a value.
+///
+/// Supports `"%.Nf"` (N decimal places) and `"%f"` (6 decimal places default).
+/// Falls back to `value.to_string()` for unrecognised patterns.
+fn apply_float_fmt(fmt: &str, value: f64) -> String {
+    // Strip leading `%` and trailing `f`/`F`
+    let inner = fmt.trim_start_matches('%').trim_end_matches(['f', 'F', 'e', 'E', 'g', 'G']);
+    if inner.is_empty() {
+        return format!("{value}");
+    }
+    // Parse optional `.N` precision
+    if let Some(prec_str) = inner.strip_prefix('.')
+        && let Ok(prec) = prec_str.parse::<usize>()
+    {
+        return format!("{value:.prec$}");
+    }
+    format!("{value}")
 }
 
 #[cfg(test)]

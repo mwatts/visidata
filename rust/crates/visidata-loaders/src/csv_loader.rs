@@ -31,12 +31,32 @@ impl Loader for CsvLoader {
             _ => b',',
         };
 
-        load_delimited(path, delimiter)
+        load_delimited(path, delimiter, b'"')
+    }
+
+    fn load_with_options(
+        &self,
+        path: &Path,
+        options: &crate::loader_options::LoaderOptions,
+    ) -> Result<Sheet> {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        // TSV always uses tab; CSV uses options.csv_delimiter (default `,`)
+        let delimiter = match ext.as_str() {
+            "tsv" | "tab" => b'\t',
+            _ => options.csv_delimiter,
+        };
+
+        load_delimited(path, delimiter, options.csv_quote_char)
     }
 }
 
-/// Load a delimited file with the given separator byte.
-fn load_delimited(path: &Path, delimiter: u8) -> Result<Sheet> {
+/// Load a delimited file with the given separator and quote bytes.
+fn load_delimited(path: &Path, delimiter: u8, quote: u8) -> Result<Sheet> {
     let name = path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -45,6 +65,7 @@ fn load_delimited(path: &Path, delimiter: u8) -> Result<Sheet> {
 
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(delimiter)
+        .quote(quote)
         .flexible(true)
         .has_headers(true)
         .from_path(path)

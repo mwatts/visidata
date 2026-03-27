@@ -1,5 +1,6 @@
 pub mod arrow_util;
 mod arrow_loader;
+pub mod loader_options;
 mod csv_loader;
 mod excel_loader;
 pub mod ext_discovery;
@@ -22,6 +23,7 @@ pub use fixed_width_loader::{FixedWidthLoader, columnize, load_fixed_width_from_
 pub use html_loader::{HtmlLoader, load_html_from_str};
 pub use json_loader::{JsonLoader, load_json_from_str, load_jsonl_from_str};
 pub use parquet_loader::ParquetLoader;
+pub use loader_options::LoaderOptions;
 pub use registry::{Loader, LoaderRegistry};
 pub use saver::save_sheet;
 pub use sqlite_loader::{SqliteLoader, load_table};

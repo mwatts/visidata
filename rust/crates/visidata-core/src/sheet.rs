@@ -267,6 +267,39 @@ impl Sheet {
         self.apply_sort();
     }
 
+    /// Apply display format strings from options to all columns of matching types.
+    ///
+    /// `float_fmt` is e.g. `"%.2f"`, `int_fmt` is `"%d"`, `date_fmt` is `"%Y-%m-%d"`.
+    /// Pass `None` for a format to leave that type's columns unchanged.
+    pub fn apply_display_formats(
+        &mut self,
+        float_fmt: Option<&str>,
+        int_fmt: Option<&str>,
+        date_fmt: Option<&str>,
+    ) {
+        for col in &mut self.columns {
+            match col.col_type {
+                crate::column::ColumnType::Float
+                | crate::column::ColumnType::Currency => {
+                    if let Some(fmt) = float_fmt {
+                        col.fmt = Some(fmt.to_owned());
+                    }
+                }
+                crate::column::ColumnType::Int => {
+                    if let Some(fmt) = int_fmt {
+                        col.fmt = Some(fmt.to_owned());
+                    }
+                }
+                crate::column::ColumnType::Date => {
+                    if let Some(fmt) = date_fmt {
+                        col.fmt = Some(fmt.to_owned());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Re-apply the current sort keys (e.g. after redo). No undo action is pushed.
     pub fn resort(&mut self) {
         if self.sort_keys.is_empty() {

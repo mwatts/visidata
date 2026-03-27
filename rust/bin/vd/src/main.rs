@@ -8,7 +8,7 @@ use std::path::Path;
 use anyhow::Result;
 use clap::Parser;
 use visidata_core::{Column, ColumnId, Row, Sheet, Value};
-use visidata_loaders::LoaderRegistry;
+use visidata_loaders::{LoaderOptions, LoaderRegistry};
 use visidata_tui::App;
 
 /// `VisiData` — a terminal interface for exploring and arranging tabular data.
@@ -36,32 +36,46 @@ fn main() -> Result<()> {
 
     let registry = LoaderRegistry::with_builtins();
 
+    // Build options first so the initial load picks up config (e.g. csv_delimiter).
+    let mut initial_options = visidata_core::options::builtin_options();
+    let initial_keybindings: Vec<(String, String)> =
+        if let Some(config_path) = visidata_core::config::default_config_path()
+            && let Ok(config) = visidata_core::config::load_config(&config_path)
+        {
+            visidata_core::config::apply_config(&config, &mut initial_options);
+            config.keybindings.into_iter().collect()
+        } else {
+            Vec::new()
+        };
+    // Apply CLI option overrides before loading
+    for opt_str in &cli.options {
+        if let Some((name, val)) = opt_str.split_once('=') {
+            initial_options.set_global(name, visidata_core::Value::Text(val.to_owned()));
+        }
+    }
+
+    // Extract loader options from the pre-loaded options
+    let csv_delimiter = match initial_options.get_global("csv_delimiter") {
+        visidata_core::Value::Text(ref s) => s.bytes().next().unwrap_or(b','),
+        _ => b',',
+    };
+    let loader_opts = LoaderOptions {
+        csv_delimiter,
+        ..Default::default()
+    };
+
     let sheet = if cli.files.is_empty() {
         demo_sheet()
     } else {
         let path = Path::new(&cli.files[0]);
-        registry.load_file(path)?
+        registry.load_file_with_options(path, &loader_opts)?
     };
 
-    let mut app = App::new(sheet);
+    let mut app = App::new_with_options(sheet, initial_options);
 
-    // Load config file if it exists
-    if let Some(config_path) = visidata_core::config::default_config_path()
-        && let Ok(config) = visidata_core::config::load_config(&config_path)
-    {
-        visidata_core::config::apply_config(&config, &mut app.options);
-        // Apply keybinding overrides
-        for (keystroke, longname) in &config.keybindings {
-            app.commands.add(keystroke, longname, "user-defined");
-        }
-    }
-
-    // Apply CLI option overrides (highest priority)
-    for opt_str in &cli.options {
-        if let Some((name, val)) = opt_str.split_once('=') {
-            app.options
-                .set_global(name, visidata_core::Value::Text(val.to_owned()));
-        }
+    // Apply pre-loaded keybinding overrides
+    for (keystroke, longname) in initial_keybindings {
+        app.commands.add(&keystroke, &longname, "user-defined");
     }
 
     // Apply start position if given

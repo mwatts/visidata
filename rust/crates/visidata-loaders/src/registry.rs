@@ -21,6 +21,22 @@ pub trait Loader: Send + Sync {
     ///
     /// Returns an error if the file cannot be read or parsed.
     fn load(&self, path: &Path) -> Result<Sheet>;
+
+    /// Load a file using runtime options extracted from `OptionsManager`.
+    ///
+    /// The default implementation ignores `options` and delegates to [`Self::load`].
+    /// Loaders that need options (e.g. `CsvLoader`) override this.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or parsed.
+    fn load_with_options(
+        &self,
+        path: &Path,
+        _options: &crate::loader_options::LoaderOptions,
+    ) -> Result<Sheet> {
+        self.load(path)
+    }
 }
 
 /// Registry of loaders, dispatching by file extension.
@@ -107,11 +123,27 @@ impl LoaderRegistry {
     ///
     /// Returns an error if no loader matches the extension or loading fails.
     pub fn load_file(&self, path: &Path) -> Result<Sheet> {
+        self.load_file_with_options(path, &crate::loader_options::LoaderOptions::default())
+    }
+
+    /// Load a file with runtime options extracted from `OptionsManager`.
+    ///
+    /// Built-in loaders receive the options snapshot via `load_with_options`.
+    /// External loaders receive relevant options via `ExtDrill::options_snapshot`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no loader matches the extension or loading fails.
+    pub fn load_file_with_options(
+        &self,
+        path: &Path,
+        options: &crate::loader_options::LoaderOptions,
+    ) -> Result<Sheet> {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         // Built-ins first.
         if let Some(loader) = self.find_loader(ext) {
-            return loader.load(path);
+            return loader.load_with_options(path, options);
         }
 
         // External loaders second.
@@ -120,6 +152,7 @@ impl LoaderRegistry {
             sheet.drill = Some(Arc::new(ExtDrill {
                 loader: Arc::clone(&ext_loader),
                 db_path: path.to_path_buf(),
+                options_snapshot: options.ext_options.clone(),
             }));
             return Ok(sheet);
         }

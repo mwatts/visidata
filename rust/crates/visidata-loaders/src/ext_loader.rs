@@ -234,6 +234,10 @@ pub struct ExtDrill {
     pub loader: Arc<ExtLoader>,
     /// Absolute path to the database file.
     pub db_path: PathBuf,
+    /// Options snapshot extracted from `OptionsManager` at drill creation time.
+    ///
+    /// Keys are prefixed by the loader name (e.g. `"vd_duckdb_batch_size"`).
+    pub options_snapshot: HashMap<String, String>,
 }
 
 impl DrillAction for ExtDrill {
@@ -243,8 +247,12 @@ impl DrillAction for ExtDrill {
             other => anyhow::bail!("expected table name in column 0, got {other:?}"),
         };
         let sql = format!("SELECT * FROM \"{name}\"");
+        let options: HashMap<String, serde_json::Value> = self.options_snapshot
+            .iter()
+            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+            .collect();
         self.loader
-            .run_query(&self.db_path, Some(&sql), HashMap::new())
+            .run_query(&self.db_path, Some(&sql), options)
     }
 }
 
