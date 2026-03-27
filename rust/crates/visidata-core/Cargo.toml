@@ -1,0 +1,13 @@
+[package]
+name = "visidata-core"
+description = "Core data model for VisiData: values, columns, rows, sheets"
+edition.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { workspace = true }
+thiserror = { workspace = true }
+unicode-width = { workspace = true }

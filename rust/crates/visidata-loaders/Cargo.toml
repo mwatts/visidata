@@ -1,0 +1,15 @@
+[package]
+name = "visidata-loaders"
+description = "File format loaders for VisiData"
+edition.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+visidata-core = { workspace = true }
+csv = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

@@ -1,0 +1,16 @@
+[package]
+name = "visidata-tui"
+description = "TUI rendering for VisiData using ratatui"
+edition.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+visidata-core = { workspace = true }
+visidata-scripting = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+anyhow = { workspace = true }
+unicode-width = { workspace = true }

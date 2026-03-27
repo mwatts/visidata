@@ -1,0 +1,13 @@
+[package]
+name = "visidata-scripting"
+description = "Rhai scripting engine for VisiData"
+edition.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+visidata-core = { workspace = true }
+rhai = { workspace = true }
+anyhow = { workspace = true }

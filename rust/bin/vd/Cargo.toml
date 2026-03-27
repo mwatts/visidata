@@ -1,0 +1,17 @@
+[package]
+name = "vd"
+description = "VisiData — a terminal interface for exploring and arranging tabular data"
+edition.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+visidata-core = { workspace = true }
+visidata-scripting = { workspace = true }
+visidata-tui = { workspace = true }
+visidata-loaders = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+mimalloc = { workspace = true }
