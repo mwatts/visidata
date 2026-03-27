@@ -32,14 +32,14 @@ Each entry has:
 
 ### GAP-022 — Select rows by expression (`z|`)
 **Python**: `selection.py` — `select-expr` prompts for a Rhai expression; selects rows where it evaluates truthy.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust blocker-2)
 **Instructions**: Reuse expression evaluation from `expr_column.rs`. Prompt for expression (command palette or new input mode). For each row, inject column values into Rhai scope, evaluate, select if result is truthy. Bind `z|`.
 
 ---
 
 ### GAP-023 — Unselect rows by expression (`z\`)
 **Python**: `selection.py` — `unselect-expr`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust blocker-2)
 **Instructions**: Same as GAP-022 but deselect. Bind `z\`.
 
 ---
@@ -153,7 +153,7 @@ Each entry has:
 
 ### GAP-067 — Search by expression (`z/`, `z?`)
 **Python**: `search.py` — `search-expr`, `searchr-expr` — evaluates a Rhai expression per row, advances to first truthy.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust blocker-2)
 **Instructions**: Add `InputMode::SearchExpr(LineEditor, Direction)`. On Accept, compile expression. Walk rows from cursor±1 evaluating expression via `rhai::Engine`; stop at first truthy result. Bind `z/`/`z?`.
 
 ---
@@ -339,21 +339,21 @@ Each entry has:
 
 ### GAP-101 — Set column values from expression (`g=`)
 **Python**: `expr.py` — `setcol-expr` prompts for expression, applies to selected rows' current column.
-**Rust now**: `=` only adds a new expression column; cannot set values on an existing column.
+**Rust now**: ✅ Implemented (commit: feat/rust blocker-2)
 **Instructions**: Detect if palette input starts with `g=`. Evaluate expression per selected row, call `sheet.set_cell(row_idx, col_source_idx, result)` for each. Bind `g=` in g-prefix block.
 
 ---
 
 ### GAP-102 — Set current cell from expression (`z=`)
 **Python**: `expr.py` — `setcell-expr` applies expression to just the cursor cell.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust blocker-2)
 **Instructions**: Same as GAP-101 but applied to `cursor_row` only. Bind `z=`.
 
 ---
 
 ### GAP-103 — Expression columns are lazily re-evaluated per render
 **Python**: `expr.py` — `ExprColumn.calcValue` evaluates the expression each time the cell is rendered.
-**Rust now**: `add_expression_column` in `expr_column.rs` materialises all values once at column-add time. If the source data changes (edit, sort, filter), expression column values become stale.
+**Rust now**: ✅ Implemented (commit: feat/rust blocker-2)
 **Instructions**: Add a `Column::expr: Option<String>` field. When set, `Column::display_value(row)` evaluates the Rhai expression instead of reading from `row.values[source_idx]`. Remove the materialisation loop from `expr_column.rs`. This is a breaking change to how expression columns work; existing tests will need updating.
 
 ---
