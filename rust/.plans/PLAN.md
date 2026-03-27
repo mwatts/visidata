@@ -88,6 +88,10 @@ rust/
    - Unit tests for expression evaluation
 8. **Unit tests** for all core types
 
+### Ported Python Tests
+- `test_date.py` — `customdate()` parser → port date parsing logic into `Value::Date` construction
+- `test_path.py` — `Path.with_name()`, `base_stem`, `ext`, `iterdir()` → port as `visidata-core::path` module tests
+
 ### Deliverable
 `cargo test` passes with core data model tests.
 
@@ -119,6 +123,12 @@ rust/
    - Load hardcoded test data if no file given
    - Initialize terminal, run app loop, restore terminal on exit
 
+### Ported Python Tests
+- `test_cliptext.py` — `dispwidth()`, `clipstr()`, `clipstr_start()`, `clipstr_middle()`, `wraptext()` → port as `visidata-tui::cliptext` module tests (display width, Unicode wide chars, text truncation)
+- `test_parsepos.py` — `parsePos()` for `+col:row` CLI position args → port as `bin/vd` CLI parsing tests
+- `test-smoke.sh` — `vd --version`, `vd -f dir . --batch` → port as binary integration tests
+- `test-startpos.sh` — `+N`, `+col:row` positioning → port as CLI integration tests
+
 ### Deliverable
 `cargo run -- test.csv` opens TUI showing data, arrow keys navigate, `q` quits.
 
@@ -144,6 +154,15 @@ rust/
 6. **Auto-detect** — by file extension, fallback to content sniffing
 7. **Integration tests** with sample files
 
+### Ported Python Tests
+- `test-delimiter.sh` — TSV/CSV/PSV/USV delimiter handling, `-d` flag, `--csv-delimiter` → port as loader integration tests
+- `test-roundtrip.sh` — load→save→reload→save idempotence for CSV/TSV/JSON → port as round-trip integration tests
+- `test-stdin.sh` — `seq 10000 | vd -f txt` piped input → port as stdin integration test
+- `test-stdin-replay.sh` — pipe JSON to stdin with commands → port as stdin+command test
+- `test_fixed_width.py` — `columnize()` column boundary detection → port when fixed-width loader added (Phase 10)
+- Batch replay tests: `load-*.vd*` files from `tests/` → port relevant load tests as golden-file comparisons
+- Test data: copy `sample_data/sample.tsv`, `sample_data/benchmark.csv` to `tests/fixtures/`
+
 ### Deliverable
 `cargo run -- data.csv`, `data.tsv`, `data.json` all work.
 
@@ -162,6 +181,10 @@ rust/
 5. **Key columns** — `!` to toggle key column, visual indicator
 6. **Input line** — bottom-of-screen text input for rename, search, etc.
 
+### Ported Python Tests
+- Batch replay tests: `addcol-*.vd*` (column addition), column rename/hide/resize tests from `tests/`
+- `test_edittext.py` — `InputWidget.editline()` keystroke handling (Home, End, Delete, Backspace, Ctrl+keys, undo, transpose) → port as `visidata-tui::input` module tests
+
 ### Deliverable
 Column operations work interactively.
 
@@ -179,6 +202,10 @@ Column operations work interactively.
 4. **Row selection** — `s` select, `u` unselect, `gs` select all, `gu` unselect all
 5. **Filter** — `"` to create filtered sheet from selected rows
 6. **Frequency table** — `F` to create frequency sheet for current column
+
+### Ported Python Tests
+- Batch replay tests: `sort*.vd*`, `freq*.vdx`, `select-*.vd*` from `tests/`
+- `test_commands.py` — subset of ~100 global commands tested on `sample.tsv`: sort, select, filter, frequency commands
 
 ### Deliverable
 Full sort/filter/select workflow.
@@ -207,6 +234,11 @@ Full sort/filter/select workflow.
 8. **Status bar** — left: mode + sheet info; right: row count, selection count
 9. **Help sheet** — `?` or `Ctrl-H` to show all commands
 10. **Error display** — show errors in status bar with color
+
+### Ported Python Tests
+- `test_keystrokes.py` — multi-key sequences (`zz`, `gg`, custom prefixes), duplicate prefix detection, unbound sequences → port as `visidata-core::keybinding` tests
+- `test_commands.py` — full command execution suite: replay ~100 commands on `sample.tsv`, verify no errors → port as command registry integration tests
+- `test_completer.py` — `CompleteExpr` autocomplete for column names and globals → port as command palette completion tests
 
 ### Deliverable
 Commands discoverable via palette and help sheet. Users can define and execute Rhai commands.
@@ -278,6 +310,12 @@ Multiple sheet types navigable via sheet stack.
 5. **HTML table loader** — `scraper` crate
 6. **Fixed-width loader** — column-position based parsing
 
+### Ported Python Tests
+- `test_fixed_width.py` — `columnize()` column boundary detection with internal spaces (issue #2265) → port as fixed-width loader tests
+- `test-roundtrip.sh` — extend to cover all new formats (SQLite, Excel, Parquet, YAML)
+- Batch replay tests: format-specific `load-*.vd*` tests from `tests/`
+- Test data: copy relevant fixtures from `sample_data/` (`.xlsx`, `.sqlite`, `.parquet`, `.yml`, `.html`, `.fixed`)
+
 ### Deliverable
 Broad file format support.
 
@@ -311,6 +349,10 @@ Full CRUD on sheet data with undo.
 3. **Pivot** — pivot table from key + value columns
 4. **Melt/Unpivot** — wide → long transformation
 5. **Sheet index** — `S` to show all sheets, navigate between them
+
+### Ported Python Tests
+- Batch replay tests: `join*.vd*`, `append.vd`, `unfurl*.vd*`, `melt*.vd*`, `pivot*.vd*` from `tests/`
+- Test data: `tests/data1.tsv`, `tests/data2.tsv`, `tests/data3.tsv` (small 3-row tables for join tests)
 
 ### Deliverable
 Multi-sheet data transformation workflow.
@@ -346,6 +388,9 @@ Large files load smoothly with progress indication.
 4. **Mouse support** — click to open/select menu items
 5. **Context-sensitive menus** — show relevant commands per sheet type
 
+### Ported Python Tests
+- `test_menu.py` — `addMenuItems()` registration and validation, menu path traversal → port as `visidata-tui::menu` tests
+
 ### Deliverable
 Full menu system.
 
@@ -365,6 +410,13 @@ Full menu system.
 6. **Mouse support** — click to position cursor, scroll wheel
 7. **Resize handling** — respond to terminal resize events
 8. **Man page / `--help`** — comprehensive CLI documentation
+
+### Ported Python Tests
+- `test-macros.sh` — macro recording and replay with `tests/macros/test_macro.vd` → port as macro integration tests
+- Batch replay tests: `macro*.vdx`, `aggregators-*.vd*` from `tests/`
+- `test-perf.sh` — performance benchmark tests (wall clock timing) → port as `#[bench]` or criterion benchmarks
+- `test_features.py` — dynamic feature test discovery → adapt as plugin test framework
+- Remaining `test-vdx.sh` batch replay tests (~184 total) — port as golden-file integration test harness
 
 ### Deliverable
 Production-quality TUI data explorer.
@@ -442,6 +494,49 @@ mimalloc = { version = "0.1", default-features = false }
 - `cargo fmt --check` — enforced formatting
 - Integration tests with sample data files in `tests/fixtures/`
 - Each phase merges to feature branch only when tests pass
+
+### Python Test Porting Approach
+
+VisiData's Python test suite has 3 layers. Each maps to a Rust equivalent:
+
+| Python Layer | Files | Rust Equivalent |
+|---|---|---|
+| **Pytest unit tests** (12 files) | `visidata/tests/test_*.py` | `#[cfg(test)] mod tests` in each crate |
+| **Batch replay tests** (184 files) | `tests/*.vd*` + `tests/golden/` | Integration test binary with golden-file comparison |
+| **Shell integration tests** (12 scripts) | `tests/test-*.sh` | `cargo test` integration tests in `bin/vd` |
+
+### Python Test → Phase Mapping
+
+| Python Test | Phase | Rust Location |
+|---|---|---|
+| `test_date.py` | 1 | `visidata-core::value` |
+| `test_path.py` | 1 | `visidata-core::path` |
+| `test_cliptext.py` | 2 | `visidata-tui::cliptext` |
+| `test_parsepos.py` | 2 | `bin/vd` CLI tests |
+| `test-smoke.sh` | 2 | `bin/vd` integration tests |
+| `test-startpos.sh` | 2 | `bin/vd` integration tests |
+| `test-delimiter.sh` | 3 | `visidata-loaders` integration tests |
+| `test-roundtrip.sh` | 3, 10 | `visidata-loaders` round-trip tests |
+| `test-stdin.sh` | 3 | `bin/vd` integration tests |
+| `test-stdin-replay.sh` | 3 | `bin/vd` integration tests |
+| `test_edittext.py` | 4 | `visidata-tui::input` |
+| `test_fixed_width.py` | 10 | `visidata-loaders::fixed_width` |
+| `test_commands.py` | 5, 6 | `visidata-core::commands` integration |
+| `test_keystrokes.py` | 6 | `visidata-core::keybinding` |
+| `test_completer.py` | 6 | `visidata-tui::completer` |
+| `test_menu.py` | 14 | `visidata-tui::menu` |
+| `test_features.py` | 15 | Plugin test framework |
+| `test-macros.sh` | 15 | `bin/vd` macro tests |
+| `test-perf.sh` | 15 | Criterion benchmarks |
+| Batch replay (184 `.vd*`) | 5–15 | Golden-file integration harness |
+
+### Golden-File Test Harness
+
+Port VisiData's `test-vdx.sh` pattern to Rust:
+1. Define test as a sequence of commands (equivalent to `.vd`/`.vdx` replay files)
+2. Run commands on input data in headless/batch mode
+3. Compare output against golden files in `tests/golden/`
+4. Update golden files with `UPDATE_GOLDEN=1 cargo test`
 
 ---
 
