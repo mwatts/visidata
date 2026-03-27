@@ -275,6 +275,13 @@ pub fn builtin_commands() -> CommandRegistry {
     // Help
     reg.add("", "help-commands", "show all commands");
 
+    // Macros
+    reg.add("Q", "macro-record-toggle", "start/stop macro recording");
+    reg.add("@", "macro-replay", "replay last recorded macro");
+
+    // Column splitting
+    reg.add("", "split-col", "split column by regex pattern");
+
     reg
 }
 

@@ -87,6 +87,18 @@ pub struct App {
 
     /// Clipboard for yank/paste.
     clipboard: Clipboard,
+
+    /// Pending single-char prefix for multi-key bindings (e.g., 'g' in 'gd').
+    pending_prefix: Option<char>,
+
+    /// Macro recorder — accumulates keystrokes while recording.
+    macro_recorder: visidata_core::macros::MacroRecorder,
+
+    /// Macro store — holds named macros.
+    macro_store: visidata_core::macros::MacroStore,
+
+    /// Keystrokes queued for replay.
+    macro_replay: Vec<String>,
 }
 
 impl App {
@@ -109,6 +121,10 @@ impl App {
             menu_bar: builtin_menu_bar(),
             menu_state: MenuState::new(),
             clipboard: Clipboard::new(),
+            pending_prefix: None,
+            macro_recorder: visidata_core::macros::MacroRecorder::new(),
+            macro_store: visidata_core::macros::MacroStore::new(),
+            macro_replay: vec![],
         }
     }
 
@@ -137,6 +153,12 @@ impl App {
 
         while self.running {
             terminal.draw(|frame| self.draw(frame))?;
+
+            // Replay macro keystrokes (drain one per iteration to keep UI responsive).
+            if !self.macro_replay.is_empty() {
+                self.replay_next_macro_key();
+                continue;
+            }
 
             // Poll for background loading data.
             self.poll_loader();
@@ -335,12 +357,52 @@ impl App {
             return;
         }
 
+        // Handle pending prefix (g-prefixed commands)
+        if let Some(prefix) = self.pending_prefix.take() {
+            if prefix == 'g' {
+                match key.code {
+                    KeyCode::Char('d') => {
+                        if let Some(s) = self.stack.active_mut() {
+                            let count = s.delete_selected_rows();
+                            self.status = format!("deleted {count} rows");
+                        }
+                        self.update_status();
+                        return;
+                    }
+                    KeyCode::Char('j') => {
+                        if let Some(s) = self.stack.active_mut()
+                            && !s.rows.is_empty()
+                        {
+                            s.cursor_row = s.rows.len() - 1;
+                        }
+                        self.update_status();
+                        return;
+                    }
+                    KeyCode::Char('k') => {
+                        if let Some(s) = self.stack.active_mut() {
+                            s.cursor_row = 0;
+                            s.top_row = 0;
+                        }
+                        self.update_status();
+                        return;
+                    }
+                    _ => {
+                        // Unknown g-prefixed key — ignore silently
+                        self.update_status();
+                        return;
+                    }
+                }
+            }
+            self.update_status();
+            return;
+        }
+
         let Some(sheet) = self.stack.active_mut() else {
             self.running = false;
             return;
         };
 
-        let height = 20_usize; // TODO: get from terminal size
+        let height = crossterm::terminal::size().map_or(20, |(_, h)| h as usize);
 
         match key.code {
             // Quit / pop sheet
@@ -362,9 +424,14 @@ impl App {
             KeyCode::PageUp => sheet.cursor_up(height.saturating_sub(2)),
 
             // Home / go to top
-            KeyCode::Home | KeyCode::Char('g') => {
+            KeyCode::Home => {
                 sheet.cursor_row = 0;
                 sheet.top_row = 0;
+            }
+            // 'g' sets pending prefix for multi-key bindings (gd, gj, gk)
+            KeyCode::Char('g') => {
+                self.pending_prefix = Some('g');
+                return;
             }
             KeyCode::End => {
                 if !sheet.rows.is_empty() {
@@ -603,7 +670,40 @@ impl App {
                 return;
             }
 
+            // --- Macro recording/replay ---
+            KeyCode::Char('Q') => {
+                if self.macro_recorder.is_recording() {
+                    if let Some(mac) = self.macro_recorder.stop("last") {
+                        self.status = format!("recorded {} keystrokes", mac.keystrokes.len());
+                        self.macro_store.save(mac);
+                    } else {
+                        self.status = "nothing recorded".into();
+                    }
+                } else {
+                    self.macro_recorder.start();
+                    self.status = "recording...".into();
+                }
+                return;
+            }
+            // Note: '@' is bound to type-date above; replay via command palette ("macro-replay")
             _ => {}
+        }
+
+        // Record this keystroke if macro recording is active
+        if self.macro_recorder.is_recording() {
+            let key_str = match key.code {
+                KeyCode::Char(c) => c.to_string(),
+                KeyCode::Enter => "Enter".into(),
+                KeyCode::Esc => "Esc".into(),
+                KeyCode::Up => "Up".into(),
+                KeyCode::Down => "Down".into(),
+                KeyCode::Left => "Left".into(),
+                KeyCode::Right => "Right".into(),
+                _ => String::new(),
+            };
+            if !key_str.is_empty() {
+                self.macro_recorder.record(&key_str);
+            }
         }
 
         self.update_status();
@@ -722,6 +822,17 @@ impl App {
                 let col_name = format!("expr{}", sheet.columns.len());
                 visidata_core::expr_column::add_expression_column(sheet, &col_name, expr);
                 self.status = format!("added column: {col_name}");
+            }
+            return;
+        }
+
+        // Handle column split: query starts with "split:"
+        if let Some(pattern) = query.strip_prefix("split:") {
+            if let Some(sheet) = self.stack.active_mut()
+                && let Some(idx) = resolve_cursor_col_idx(sheet)
+            {
+                let added = visidata_core::sheets::split_column(sheet, idx, pattern);
+                self.status = format!("split into {added} columns");
             }
             return;
         }
@@ -954,6 +1065,30 @@ impl App {
                     self.stack.push(melted);
                 }
             }
+            "split-col" => {
+                self.mode = InputMode::CommandPalette(LineEditor::new("split:"));
+            }
+            "macro-record-toggle" => {
+                if self.macro_recorder.is_recording() {
+                    if let Some(mac) = self.macro_recorder.stop("last") {
+                        self.status = format!("recorded {} keystrokes", mac.keystrokes.len());
+                        self.macro_store.save(mac);
+                    } else {
+                        self.status = "nothing recorded".into();
+                    }
+                } else {
+                    self.macro_recorder.start();
+                    self.status = "recording...".into();
+                }
+            }
+            "macro-replay" => {
+                if let Some(mac) = self.macro_store.get("last") {
+                    self.macro_replay = mac.keystrokes.clone();
+                    self.status = format!("replaying {} keystrokes", self.macro_replay.len());
+                } else {
+                    self.status = "no macro recorded".into();
+                }
+            }
             _ => {
                 self.status = format!("unknown command: {longname}");
             }
@@ -1040,6 +1175,20 @@ impl App {
                     sheet.cursor_down(3);
                 }
             }
+            MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                // Row 0 of the table area = header; row 1+ = data rows.
+                // Data rows start at y=1 (after header).
+                let click_row = mouse.row as usize;
+                if click_row == 0 {
+                    // Header click — do nothing
+                } else if let Some(sheet) = self.stack.active_mut() {
+                    // Data row = click_row - 1 (subtract header) + top_row
+                    let data_row_idx = (click_row.saturating_sub(1)) + sheet.top_row;
+                    if data_row_idx < sheet.num_rows() {
+                        sheet.cursor_row = data_row_idx;
+                    }
+                }
+            }
             _ => {}
         }
         self.update_status();
@@ -1108,6 +1257,41 @@ impl App {
         let joined =
             visidata_core::sheets::join_sheets(left, right, visidata_core::sheets::JoinType::Inner);
         self.stack.push(joined);
+    }
+
+    /// Replay the next queued macro keystroke.
+    fn replay_next_macro_key(&mut self) {
+        let Some(key_str) = self.macro_replay.first().cloned() else {
+            return;
+        };
+        self.macro_replay.remove(0);
+
+        match key_str.as_str() {
+            "j" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.cursor_down(1);
+                }
+            }
+            "k" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.cursor_up(1);
+                }
+            }
+            "l" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.cursor_right(1);
+                }
+            }
+            "h" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.cursor_left(1);
+                }
+            }
+            other => {
+                self.dispatch_command(other);
+            }
+        }
+        self.update_status();
     }
 
     /// Save the current sheet to its source file.

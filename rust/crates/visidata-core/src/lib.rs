@@ -6,6 +6,7 @@ pub mod commands;
 pub mod config;
 pub mod expr_column;
 pub mod help;
+pub mod macros;
 pub mod menu;
 pub mod options;
 mod row;

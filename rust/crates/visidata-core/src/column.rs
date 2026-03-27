@@ -62,9 +62,43 @@ impl ColumnType {
                 Value::Null => Value::Bool(false),
                 _ => Value::Error(format!("cannot convert {} to bool", value.type_name())),
             },
-            Self::Date | Self::Currency => {
-                // Placeholder — full parsing in later phases
-                Value::Text(value.to_string())
+            Self::Date => {
+                // Try to parse common date formats using chrono
+                let s = value.to_string();
+                // Already a date?
+                if let Value::Date(d) = value {
+                    return Value::Date(*d);
+                }
+                // Try common formats
+                let formats = [
+                    "%Y-%m-%d",
+                    "%d/%m/%Y",
+                    "%m/%d/%Y",
+                    "%Y-%m-%dT%H:%M:%S",
+                    "%Y-%m-%d %H:%M:%S",
+                    "%d-%m-%Y",
+                ];
+                for fmt in &formats {
+                    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&s, fmt) {
+                        return Value::Date(dt);
+                    }
+                    if let Ok(d) = chrono::NaiveDate::parse_from_str(&s, fmt) {
+                        return Value::Date(d.and_hms_opt(0, 0, 0).unwrap_or_default());
+                    }
+                }
+                Value::Error(format!("cannot parse date: {s}"))
+            }
+            Self::Currency => {
+                // Strip currency symbols, commas, then parse as float
+                let s = value.to_string();
+                let cleaned: String = s
+                    .chars()
+                    .filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
+                    .collect();
+                cleaned.parse::<f64>().map_or_else(
+                    |_| Value::Error(format!("cannot parse currency: {s}")),
+                    Value::Float,
+                )
             }
         }
     }
@@ -299,20 +333,36 @@ mod tests {
     }
 
     #[test]
-    fn coerce_date_placeholder() {
-        let row = Row::new(vec![Value::Int(42)]);
-        let mut col = Column::new(ColumnId(0), "c", 0);
+    fn coerce_date_iso() {
+        let row = Row::new(vec![Value::Text("2023-06-15".into())]);
+        let mut col = Column::new(ColumnId(0), "date", 0);
         col.col_type = ColumnType::Date;
-        // Placeholder: converts to text representation
-        assert_eq!(col.typed_value(&row), Value::Text("42".into()));
+        let val = col.typed_value(&row);
+        assert!(matches!(val, Value::Date(_)), "expected Date, got {val:?}");
     }
 
     #[test]
-    fn coerce_currency_placeholder() {
-        let row = Row::new(vec![Value::Float(19.99)]);
-        let mut col = Column::new(ColumnId(0), "c", 0);
+    fn coerce_date_bad_string() {
+        let row = Row::new(vec![Value::Text("not-a-date".into())]);
+        let mut col = Column::new(ColumnId(0), "date", 0);
+        col.col_type = ColumnType::Date;
+        assert!(col.typed_value(&row).is_error());
+    }
+
+    #[test]
+    fn coerce_currency_dollar() {
+        let row = Row::new(vec![Value::Text("$1,234.56".into())]);
+        let mut col = Column::new(ColumnId(0), "price", 0);
         col.col_type = ColumnType::Currency;
-        assert_eq!(col.typed_value(&row), Value::Text("19.99".into()));
+        assert_eq!(col.typed_value(&row), Value::Float(1234.56));
+    }
+
+    #[test]
+    fn coerce_currency_bad() {
+        let row = Row::new(vec![Value::Text("abc".into())]);
+        let mut col = Column::new(ColumnId(0), "price", 0);
+        col.col_type = ColumnType::Currency;
+        assert!(col.typed_value(&row).is_error());
     }
 
     #[test]

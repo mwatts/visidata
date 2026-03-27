@@ -612,6 +612,92 @@ pub fn melt_sheet(source: &Sheet) -> Sheet {
     Sheet::with_data(format!("{}_melt", source.name), out_cols, out_rows)
 }
 
+// --- Column splitting ---
+
+/// Split a column by a regex pattern into multiple new columns.
+///
+/// For each row, the pattern is applied to the column value and the capture
+/// groups (or split parts) become new column values.  If there are no capture
+/// groups, the matched parts from splitting by the delimiter become the values.
+///
+/// Returns the number of new columns added, or `0` if the pattern is invalid
+/// or the column index is out of range.
+pub fn split_column(source: &mut Sheet, col_idx: usize, pattern: &str) -> usize {
+    let Ok(re) = regex::Regex::new(pattern) else {
+        return 0;
+    };
+
+    let Some(col) = source.columns.get(col_idx) else {
+        return 0;
+    };
+    let col_name = col.name.clone();
+    let source_idx = col.source_idx;
+
+    // Determine max split count across all rows.
+    let use_captures = re.captures_len() > 1;
+    let max_parts: usize = source
+        .rows
+        .iter()
+        .map(|row| {
+            let display = source.columns[col_idx].display_value(row);
+            if use_captures {
+                re.captures(&display)
+                    .map_or(0, |c| c.len().saturating_sub(1))
+            } else {
+                re.split(&display).count()
+            }
+        })
+        .max()
+        .unwrap_or(0);
+
+    if max_parts == 0 {
+        return 0;
+    }
+
+    // The new values will be appended starting at the current end of each row.
+    let base_source_idx = source.rows.first().map_or(0, |r| r.values.len());
+    let start_col_id = source.columns.len();
+
+    // Add new columns.
+    for i in 0..max_parts {
+        let new_col_id = ColumnId(start_col_id + i);
+        let new_source_idx = base_source_idx + i;
+        source.columns.push(Column::new(
+            new_col_id,
+            format!("{col_name}_{i}"),
+            new_source_idx,
+        ));
+    }
+
+    // Fill values for each row.
+    for row in &mut source.rows {
+        let display: String = row.get(source_idx).to_string();
+        let parts: Vec<String> = if use_captures {
+            re.captures(&display).map_or_else(Vec::new, |caps| {
+                (1..caps.len())
+                    .map(|i| caps.get(i).map_or("", |m| m.as_str()).to_owned())
+                    .collect()
+            })
+        } else {
+            re.split(&display).map(str::to_owned).collect()
+        };
+
+        for i in 0..max_parts {
+            let val = parts.get(i).map_or(Value::Null, |s| {
+                if s.is_empty() {
+                    Value::Null
+                } else {
+                    Value::Text(s.clone())
+                }
+            });
+            let target_idx = base_source_idx + i;
+            row.set(target_idx, val);
+        }
+    }
+
+    max_parts
+}
+
 // --- Helpers ---
 
 fn key_column_indices(sheet: &Sheet) -> Vec<usize> {
@@ -1040,5 +1126,46 @@ mod tests {
         assert_eq!(melted.get_cell(0, 0), Value::Text("Alice".into()));
         assert_eq!(melted.get_cell(0, 1), Value::Text("q1".into()));
         assert_eq!(melted.get_cell(0, 2), Value::Int(10));
+    }
+
+    // --- split_column tests ---
+
+    #[test]
+    fn split_column_basic() {
+        let columns = vec![Column::new(ColumnId(0), "email", 0)];
+        let rows = vec![
+            Row::new(vec![Value::Text("alice@example.com".into())]),
+            Row::new(vec![Value::Text("bob@test.org".into())]),
+        ];
+        let mut sheet = Sheet::with_data("test", columns, rows);
+
+        let added = split_column(&mut sheet, 0, "@");
+        assert_eq!(added, 2);
+        assert_eq!(sheet.num_cols(), 3);
+        assert_eq!(sheet.get_cell(0, 1), Value::Text("alice".into()));
+        assert_eq!(sheet.get_cell(0, 2), Value::Text("example.com".into()));
+    }
+
+    #[test]
+    fn split_column_captures() {
+        let columns = vec![Column::new(ColumnId(0), "date", 0)];
+        let rows = vec![Row::new(vec![Value::Text("2023-06-15".into())])];
+        let mut sheet = Sheet::with_data("test", columns, rows);
+
+        let added = split_column(&mut sheet, 0, r"(\d{4})-(\d{2})-(\d{2})");
+        assert_eq!(added, 3);
+        assert_eq!(sheet.get_cell(0, 1), Value::Text("2023".into()));
+        assert_eq!(sheet.get_cell(0, 2), Value::Text("06".into()));
+        assert_eq!(sheet.get_cell(0, 3), Value::Text("15".into()));
+    }
+
+    #[test]
+    fn split_column_invalid_regex() {
+        let columns = vec![Column::new(ColumnId(0), "x", 0)];
+        let rows = vec![Row::new(vec![Value::Text("foo".into())])];
+        let mut sheet = Sheet::with_data("test", columns, rows);
+
+        let added = split_column(&mut sheet, 0, "[invalid");
+        assert_eq!(added, 0); // no columns added for bad regex
     }
 }
