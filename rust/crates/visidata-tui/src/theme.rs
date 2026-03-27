@@ -28,6 +28,8 @@ pub struct Theme {
     pub row_cursor: Style,
     /// Selected row cells.
     pub row_selected: Style,
+    /// Row pending deletion (deferred-modifications mode).
+    pub row_pending_delete: Style,
     /// Key column cells.
     pub col_key: Style,
 
@@ -69,6 +71,8 @@ pub struct CellContext {
     pub is_error: bool,
     /// The value is numeric (int or float).
     pub is_numeric: bool,
+    /// Row is pending deletion (deferred-modifications mode).
+    pub is_pending_delete: bool,
 }
 
 impl Theme {
@@ -86,6 +90,7 @@ impl Theme {
             cell_cursor: Style::new().reversed(),
             row_cursor: Style::new().fg(Color::White).on_black(),
             row_selected: Style::new().fg(Color::Cyan),
+            row_pending_delete: Style::new().fg(Color::Red).crossed_out(),
             col_key: Style::new().fg(Color::Green),
 
             cell_numeric: Style::default(),
@@ -116,6 +121,7 @@ impl Theme {
             cell_cursor: Style::new().fg(Color::Black).bg(Color::White),
             row_cursor: Style::new().fg(Color::White).bg(Color::Indexed(236)),
             row_selected: Style::new().fg(Color::Yellow).bold(),
+            row_pending_delete: Style::new().fg(Color::Red).crossed_out(),
             col_key: Style::new().fg(Color::Green),
 
             cell_numeric: Style::new().fg(Color::Cyan),
@@ -146,6 +152,7 @@ impl Theme {
             cell_cursor: Style::new().fg(Color::White).bg(Color::Blue),
             row_cursor: Style::new().fg(Color::Black).bg(Color::Indexed(254)),
             row_selected: Style::new().fg(Color::Blue).bold(),
+            row_pending_delete: Style::new().fg(Color::Red).crossed_out(),
             col_key: Style::new().fg(Color::DarkGray).bold(),
 
             cell_numeric: Style::new().fg(Color::DarkGray),
@@ -232,7 +239,10 @@ impl Theme {
     /// Resolve the style for a data cell based on its context.
     #[must_use]
     pub const fn cell_style(&self, ctx: &CellContext) -> Style {
-        // Priority order: cursor cell > cursor row > selected > error > null > key col > numeric > default
+        // Priority order: pending_delete > cursor cell > cursor row > selected > error > null > key col > numeric > default
+        if ctx.is_pending_delete {
+            return self.row_pending_delete;
+        }
         if ctx.is_cursor_cell {
             return self.cell_cursor;
         }

@@ -25,7 +25,7 @@ Status: `[ ]` open · `[~]` in progress · `[x]` done · `[-]` won't fix
 ## High Priority — Medium Effort
 
 - [x] **GAP-UX-13** Input history: Up/Down in search inputs (`/`, `?`) recalls previous patterns
-- [ ] **GAP-UX-14** Join operations: complete command handlers for inner/left/right/outer joins
+- [x] **GAP-UX-14** Join operations: all four join types implemented (`join-type-inner/left/right/outer`)
 - [x] **GAP-UX-15** Numeric frequency bins: FreqSheet auto-bins numeric cols into 10 equal-width ranges when >10 distinct values
 - [x] **GAP-UX-16** Status history sheet: `Ctrl+P` opens sheet of all past status messages
 - [x] **GAP-UX-17** Navigation: `z<` / `z>` jump to prev/next null cell in current column
@@ -46,21 +46,20 @@ Status: `[ ]` open · `[~]` in progress · `[x]` done · `[-]` won't fix
 
 - [x] **GAP-UX-23** Dedupe: `z,` selects rows where key column values repeat
 - [x] **GAP-UX-24** Rank column: `zR` adds rank column based on current column values
-- [ ] **GAP-UX-25** Auto-refresh: `reload-every N` — periodically reload sheet source data
+- [x] **GAP-UX-25** Auto-refresh: `reload-every` command prompts for interval in seconds; auto-reloads in event loop
 - [x] **GAP-UX-26** Sort feedback: status shows "sorted by colname ↑/↓" after sort commands
-- [ ] **GAP-UX-27** Right-click context menu (mouse): basic context actions on cell right-click
+- [x] **GAP-UX-27** Right-click context menu: 6-item floating menu; j/k to navigate, Enter to execute, Esc to dismiss
 
 ---
 
 ## Lower Priority — High Effort
 
-- [ ] **GAP-UX-28** Deferred modifications: mark cells/rows pending, commit/rollback as batch (needed for DB sheets)
-- [ ] **GAP-UX-29** Sidebar contextual help: live sidebar showing sheet guide / current command hints
-- [ ] **GAP-UX-30** Pivot tables: full `PivotSheet` — group by key cols, pivot by value col, aggregated cells, drill-down
+- [x] **GAP-UX-28** Deferred modifications: `toggle-deferred-mode`; `d`/`gd` marks pending (crossed-out); `gc` commits, `gD` discards
+- [x] **GAP-UX-29** Sidebar: `Ctrl+G` toggles 26-char info panel — sheet name, dimensions, column type/agg, sort keys
+- [x] **GAP-UX-30** Pivot tables: `W` → `pivot_sheet`, grouping + aggregation + drill-down (already implemented)
 
 ---
 
-## Won't Fix / Out of Scope
-
-- [-] **GAP-UX-31** Melt/reshape (wide-to-long) — deferred until core gaps closed
-- [-] **GAP-UX-32** Python expression search (`z/`) — Rhai-only by design; not a gap
+## Implemented (previously misclassified)
+- [x] **GAP-UX-31** Melt/reshape: `M` → `melt_sheet`; `gM` → melt with column-name regex
+- [x] **GAP-UX-32** Expression search: `z/`/`z?` runs Rhai expression search (equivalent to Python's)

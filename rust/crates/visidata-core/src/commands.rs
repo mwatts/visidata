@@ -360,6 +360,17 @@ pub fn builtin_commands() -> CommandRegistry {
     // Status history sheet (GAP-UX-16)
     reg.add("", "status-history-sheet", "show history of status messages (Ctrl+P)");
 
+    // Deferred modifications (GAP-UX-28)
+    reg.add("", "commit-edits", "commit all pending deletions");
+    reg.add("", "discard-edits", "discard all pending deletions");
+    reg.add("", "toggle-deferred-mode", "toggle deferred-delete mode");
+
+    // Sidebar toggle (GAP-UX-29)
+    reg.add("", "toggle-sidebar", "toggle info sidebar (Ctrl+G)");
+
+    // Auto-refresh (GAP-UX-25)
+    reg.add("", "reload-every", "auto-reload sheet every N seconds (0 to disable)");
+
     // Save
     reg.add("", "save-sheet", "save sheet to source file (Ctrl+S)");
     reg.add("", "save-all", "save all sheets with source paths (gCtrl+S)");

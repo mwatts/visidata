@@ -28,6 +28,19 @@ use crate::input::{EditResult, LineEditor};
 use crate::renderer;
 use crate::theme::Theme;
 
+/// Right-click context menu state (GAP-UX-27).
+#[derive(Debug, Clone)]
+struct ContextMenu {
+    /// (label, command-longname) pairs.
+    items: Vec<(String, String)>,
+    /// Currently highlighted item index.
+    selected: usize,
+    /// Screen row of the anchor (right-click position).
+    anchor_row: u16,
+    /// Screen column of the anchor.
+    anchor_col: u16,
+}
+
 /// System clipboard operation mode.
 #[derive(Debug, Clone, Copy)]
 enum SysClipMode {
@@ -128,6 +141,8 @@ enum InputMode {
     Menu,
     /// Floating keybindings help overlay.
     Help { scroll: usize },
+    /// Input for auto-reload interval in seconds.
+    ReloadEveryInput(LineEditor),
 }
 
 /// Application state for the TUI.
@@ -214,6 +229,18 @@ pub struct App {
     /// Usage counts per command longname, for palette frequency weighting (GAP-UX-20).
     command_usage: std::collections::HashMap<String, u32>,
 
+    /// Whether the sidebar info panel is shown (GAP-UX-29).
+    pub show_sidebar: bool,
+
+    /// Auto-reload interval, if set (GAP-UX-25).
+    auto_reload_interval: Option<std::time::Duration>,
+
+    /// When the last auto-reload was triggered.
+    last_reload_at: Option<std::time::Instant>,
+
+    /// Right-click context menu state: items + selected index (GAP-UX-27).
+    context_menu: Option<ContextMenu>,
+
     /// Per-input-type history of accepted strings, newest first (capped at 50 each).
     input_history: std::collections::HashMap<String, std::collections::VecDeque<String>>,
 
@@ -270,6 +297,10 @@ impl App {
             command_log: Vec::new(),
             status_history: std::collections::VecDeque::new(),
             command_usage: std::collections::HashMap::new(),
+            show_sidebar: false,
+            auto_reload_interval: None,
+            last_reload_at: None,
+            context_menu: None,
             input_history: std::collections::HashMap::new(),
             input_history_pos: std::collections::HashMap::new(),
             input_history_live: std::collections::HashMap::new(),
@@ -322,9 +353,17 @@ impl App {
             // Poll for background loading data.
             self.poll_loader();
 
+            // Auto-reload if interval has elapsed (GAP-UX-25).
+            if let (Some(interval), Some(last)) = (self.auto_reload_interval, self.last_reload_at) {
+                if last.elapsed() >= interval {
+                    self.reload_current_sheet();
+                    self.last_reload_at = Some(std::time::Instant::now());
+                }
+            }
+
             // Poll for keyboard events with a timeout so we can refresh
             // during background loads.
-            let timeout = if self.load_handle.is_some() {
+            let timeout = if self.load_handle.is_some() || self.auto_reload_interval.is_some() {
                 std::time::Duration::from_millis(50)
             } else {
                 std::time::Duration::from_millis(500)
@@ -351,7 +390,8 @@ impl App {
                         | InputMode::SetColInput(_)
                         | InputMode::ResizeColInput(_)
                         | InputMode::AddRowsInput(_)
-                        | InputMode::CommandPalette(_) => self.handle_input_key(key),
+                        | InputMode::CommandPalette(_)
+                        | InputMode::ReloadEveryInput(_) => self.handle_input_key(key),
                     },
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
                     Event::Resize(_, _) => {
@@ -463,6 +503,7 @@ impl App {
                 InputMode::SetColInput(editor) => Some(format!("set column: {}", editor.text())),
                 InputMode::ResizeColInput(editor) => Some(format!("column width: {}", editor.text())),
                 InputMode::AddRowsInput(editor) => Some(format!("add N rows: {}", editor.text())),
+                InputMode::ReloadEveryInput(editor) => Some(format!("reload every (seconds, 0=off): {}", editor.text())),
                 // These modes render as overlays; suppress the inline input bar.
                 InputMode::Normal
                 | InputMode::CommandPalette(_)
@@ -478,6 +519,7 @@ impl App {
                 input_text.as_deref(),
                 &self.theme,
                 self.script_engine.engine(),
+                self.show_sidebar,
             );
             // Write computed top_row back so sheet state stays in sync (fix #7).
             if let Some(s) = self.stack.active_mut() {
@@ -510,6 +552,16 @@ impl App {
                 });
                 renderer::draw_command_palette(frame, area, &query, &matches, &self.theme);
             }
+
+            // Context menu overlay (drawn last so it's on top of everything).
+            if let Some(ref cm) = self.context_menu {
+                renderer::draw_context_menu(
+                    frame, area,
+                    &cm.items, cm.selected,
+                    cm.anchor_row, cm.anchor_col,
+                    &self.theme,
+                );
+            }
         } else {
             let text = Text::raw("No sheets open. Press q to quit.");
             frame.render_widget(text, area);
@@ -522,6 +574,38 @@ impl App {
         reason = "single match dispatch — splitting would reduce readability"
     )]
     fn handle_normal_key(&mut self, key: KeyEvent) {
+        // Context menu navigation takes priority (GAP-UX-27).
+        if self.context_menu.is_some() {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if let Some(cm) = &mut self.context_menu {
+                        if cm.selected > 0 { cm.selected -= 1; }
+                    }
+                    return;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if let Some(cm) = &mut self.context_menu {
+                        if cm.selected + 1 < cm.items.len() { cm.selected += 1; }
+                    }
+                    return;
+                }
+                KeyCode::Enter => {
+                    if let Some(cm) = self.context_menu.take() {
+                        let cmd = cm.items[cm.selected].1.clone();
+                        self.dispatch_command(&cmd);
+                    }
+                    return;
+                }
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.context_menu = None;
+                    return;
+                }
+                _ => {
+                    self.context_menu = None;
+                }
+            }
+        }
+
         // Ctrl-C: cancel active load first, quit on second press (GAP-111)
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             if self.load_handle.is_some() {
@@ -610,6 +694,12 @@ impl App {
         // Ctrl+P = status history sheet (GAP-UX-16)
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
             self.dispatch_command("status-history-sheet");
+            return;
+        }
+
+        // Ctrl+G = toggle sidebar (GAP-UX-29)
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('g') {
+            self.dispatch_command("toggle-sidebar");
             return;
         }
 
@@ -797,6 +887,16 @@ impl App {
                         editor: LineEditor::new(""),
                         select: false,
                     };
+                    return;
+                }
+
+                // gc = commit pending deletes; gD = discard pending deletes
+                ("g", KeyCode::Char('c')) => {
+                    self.dispatch_command("commit-edits");
+                    return;
+                }
+                ("g", KeyCode::Char('D')) => {
+                    self.dispatch_command("discard-edits");
                     return;
                 }
 
@@ -1814,6 +1914,23 @@ impl App {
                 EditResult::Cancel => self.mode = InputMode::Normal,
                 EditResult::Continue => self.mode = InputMode::AddRowsInput(editor),
             },
+            InputMode::ReloadEveryInput(mut editor) => match editor.handle_key(&key_str) {
+                EditResult::Accept(s) => {
+                    let secs: f64 = s.trim().parse().unwrap_or(0.0);
+                    if secs <= 0.0 {
+                        self.auto_reload_interval = None;
+                        self.last_reload_at = None;
+                        self.status = "auto-reload disabled".into();
+                    } else {
+                        self.auto_reload_interval = Some(std::time::Duration::from_secs_f64(secs));
+                        self.last_reload_at = Some(std::time::Instant::now());
+                        self.status = format!("auto-reload every {secs}s");
+                    }
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Cancel => self.mode = InputMode::Normal,
+                EditResult::Continue => self.mode = InputMode::ReloadEveryInput(editor),
+            },
             InputMode::Normal | InputMode::Menu | InputMode::Help { .. } => unreachable!(),
         }
 
@@ -2301,13 +2418,23 @@ impl App {
                 if let Some(s) = self.stack.active_mut()
                     && !s.rows.is_empty()
                 {
-                    s.delete_row_at(s.cursor_row);
+                    if s.deferred_mode {
+                        s.rows[s.cursor_row].pending_delete = true;
+                        self.status = "row marked for deletion (gc to commit, gD to discard)".into();
+                    } else {
+                        s.delete_row_at(s.cursor_row);
+                    }
                 }
             }
             "delete-selected" => {
                 if let Some(s) = self.stack.active_mut() {
-                    let count = s.delete_selected_rows();
-                    self.status = format!("deleted {count} rows");
+                    if s.deferred_mode {
+                        let n = s.rows.iter_mut().filter(|r| r.selected).map(|r| { r.pending_delete = true; }).count();
+                        self.status = format!("{n} rows marked for deletion");
+                    } else {
+                        let count = s.delete_selected_rows();
+                        self.status = format!("deleted {count} rows");
+                    }
                 }
             }
             "undo" => self.do_undo(),
@@ -2994,6 +3121,48 @@ impl App {
                 }
             }
 
+            // --- Sidebar toggle (GAP-UX-29) ---
+            "toggle-sidebar" => {
+                self.show_sidebar = !self.show_sidebar;
+                self.status = if self.show_sidebar { "sidebar on".into() } else { "sidebar off".into() };
+            }
+
+            // --- Auto-reload (GAP-UX-25) ---
+            "reload-every" => {
+                self.mode = InputMode::ReloadEveryInput(LineEditor::new("5"));
+            }
+
+            // --- Deferred modifications (GAP-UX-28) ---
+            "toggle-deferred-mode" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.deferred_mode = !s.deferred_mode;
+                    self.status = if s.deferred_mode {
+                        "deferred-delete on — use d to mark rows, gc to commit, gD to discard".into()
+                    } else {
+                        "deferred-delete off".into()
+                    };
+                }
+            }
+            "commit-edits" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let before = s.rows.len();
+                    s.rows.retain(|r| !r.pending_delete);
+                    let removed = before - s.rows.len();
+                    s.modified = removed > 0;
+                    s.clamp_cursor();
+                    self.status = format!("committed: deleted {removed} rows");
+                }
+            }
+            "discard-edits" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let n: usize = s.rows.iter().filter(|r| r.pending_delete).count();
+                    for r in &mut s.rows {
+                        r.pending_delete = false;
+                    }
+                    self.status = format!("discarded {n} pending deletions");
+                }
+            }
+
             // --- Status history sheet (GAP-UX-16) ---
             "status-history-sheet" => {
                 let col = visidata_core::Column::new(visidata_core::ColumnId(0), "message", 0);
@@ -3582,18 +3751,36 @@ impl App {
                 }
             }
             MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                // Dismiss any open context menu first.
+                if self.context_menu.take().is_some() {
+                    return;
+                }
                 // Row 0 of the table area = header; row 1+ = data rows.
-                // Data rows start at y=1 (after header).
                 let click_row = mouse.row as usize;
                 if click_row == 0 {
                     // Header click — do nothing
                 } else if let Some(sheet) = self.stack.active_mut() {
-                    // Data row = click_row - 1 (subtract header) + top_row
                     let data_row_idx = (click_row.saturating_sub(1)) + sheet.top_row;
                     if data_row_idx < sheet.num_rows() {
                         sheet.cursor_row = data_row_idx;
                     }
                 }
+            }
+            // Right-click: open context menu anchored at the click position (GAP-UX-27).
+            MouseEventKind::Down(crossterm::event::MouseButton::Right) => {
+                self.context_menu = Some(ContextMenu {
+                    items: vec![
+                        ("Edit cell".into(),       "edit-cell".into()),
+                        ("Delete row".into(),      "delete-row".into()),
+                        ("Select row".into(),      "select-row".into()),
+                        ("Yank row".into(),        "yank-row".into()),
+                        ("Frequency table".into(), "freq-col".into()),
+                        ("Describe sheet".into(),  "describe-sheet".into()),
+                    ],
+                    selected: 0,
+                    anchor_row: mouse.row,
+                    anchor_col: mouse.column,
+                });
             }
             _ => {}
         }

@@ -33,6 +33,9 @@ pub struct Row {
 
     /// Whether this row is selected.
     pub selected: bool,
+
+    /// Whether this row is pending deletion (deferred-modifications mode).
+    pub pending_delete: bool,
 }
 
 impl Row {
@@ -43,6 +46,7 @@ impl Row {
             id: next_row_id(),
             values,
             selected: false,
+            pending_delete: false,
         }
     }
 

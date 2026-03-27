@@ -46,9 +46,24 @@ pub fn draw_sheet(
     input_line: Option<&str>,
     theme: &Theme,
     engine: &rhai::Engine,
+    show_sidebar: bool,
 ) -> usize {
     use ratatui::widgets::LineGauge;
     use visidata_core::async_loader::LoadingState;
+
+    // Split into main area and optional sidebar.
+    const SIDEBAR_WIDTH: u16 = 26;
+    let main_area = if show_sidebar && area.width > SIDEBAR_WIDTH + 10 {
+        let parts = Layout::horizontal([
+            Constraint::Min(10),
+            Constraint::Length(SIDEBAR_WIDTH),
+        ])
+        .split(area);
+        draw_sidebar(frame, parts[1], sheet, theme);
+        parts[0]
+    } else {
+        area
+    };
 
     let has_input = input_line.is_some();
     let chunks = if has_input {
@@ -57,13 +72,13 @@ pub fn draw_sheet(
             Constraint::Length(1), // input line
             Constraint::Length(1), // status bar
         ])
-        .split(area)
+        .split(main_area)
     } else {
         Layout::vertical([
             Constraint::Min(3),    // table
             Constraint::Length(1), // status bar
         ])
-        .split(area)
+        .split(main_area)
     };
 
     let computed_top_row = draw_table(frame, chunks[0], sheet, theme, engine);
@@ -241,6 +256,7 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme, e
                         is_cursor_cell: is_cursor_row && vi + left == sheet.cursor_col,
                         is_cursor_row,
                         is_selected: row.selected,
+                        is_pending_delete: row.pending_delete,
                         is_key_col: col.is_key,
                         is_null: raw_value.is_null(),
                         is_error: raw_value.is_error(),
@@ -298,6 +314,100 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         Constraint::Percentage((100 - percent_x) / 2),
     ])
     .split(vertical[1])[1]
+}
+
+/// Draw a sidebar panel showing contextual sheet/column information.
+fn draw_sidebar(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme) {
+    use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+
+    let block = Block::default()
+        .borders(Borders::LEFT)
+        .border_style(theme.column_sep)
+        .title(" Info ")
+        .title_style(theme.header);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let cur_col = sheet.visible_columns().get(sheet.cursor_col).cloned();
+    let col_info = cur_col.as_ref().map_or_else(
+        || "—".to_owned(),
+        |c| format!("{}{} ({})", c.col_type.indicator(), c.name,
+            c.width.map_or("auto".to_owned(), |w| format!("{w}ch"))),
+    );
+    let agg_info = cur_col.as_ref()
+        .and_then(|c| c.aggregators.first().copied())
+        .map_or("none".to_owned(), |f| f.name().to_owned());
+
+    let sort_info = if sheet.sort_keys.is_empty() {
+        "none".to_owned()
+    } else {
+        sheet.sort_keys.iter().enumerate()
+            .map(|(i, sk)| {
+                let name = sheet.columns.get(sk.col_idx)
+                    .map_or("?", |c| c.name.as_str());
+                let arrow = match sk.direction {
+                    SortDirection::Ascending  => "↑",
+                    SortDirection::Descending => "↓",
+                };
+                format!("{}{}{}", name, arrow, i + 1)
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let pending = sheet.rows.iter().filter(|r| r.pending_delete).count();
+    let pending_info = if pending > 0 {
+        format!("\n⚠ {pending} pending delete")
+    } else {
+        String::new()
+    };
+
+    let text = format!(
+        "{}\n{} rows × {} cols\n\nCol: {col_info}\nAgg: {agg_info}\n\nSort: {sort_info}{pending_info}",
+        sheet.name,
+        sheet.num_rows(),
+        sheet.visible_columns().len(),
+    );
+
+    let para = Paragraph::new(text)
+        .style(theme.cell_null)
+        .wrap(Wrap { trim: true });
+    frame.render_widget(para, inner);
+}
+
+/// Draw a floating right-click context menu.
+pub fn draw_context_menu(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    items: &[(String, String)],
+    selected: usize,
+    anchor_row: u16,
+    anchor_col: u16,
+    theme: &Theme,
+) {
+    use ratatui::widgets::{Clear, List, ListItem};
+
+    #[expect(clippy::cast_possible_truncation, reason = "item label lengths won't exceed u16")]
+    let w = items.iter().map(|(l, _)| l.len()).max().unwrap_or(10) as u16 + 4;
+    let h = items.len() as u16 + 2;
+
+    let x = anchor_col.min(area.width.saturating_sub(w));
+    let y = (anchor_row + 1).min(area.height.saturating_sub(h));
+    let menu_area = Rect { x, y, width: w.min(area.width), height: h.min(area.height) };
+
+    frame.render_widget(Clear, menu_area);
+    let list_items: Vec<ListItem<'_>> = items.iter().enumerate()
+        .map(|(i, (label, _))| {
+            if i == selected {
+                ListItem::new(format!(" > {label} ")).style(theme.cell_cursor)
+            } else {
+                ListItem::new(format!("   {label} ")).style(theme.cell_default)
+            }
+        })
+        .collect();
+    let list = List::new(list_items)
+        .block(ratatui::widgets::Block::bordered().border_style(theme.status_bar));
+    frame.render_widget(list, menu_area);
 }
 
 /// Draw a floating help overlay showing all keybindings.

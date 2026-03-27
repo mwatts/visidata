@@ -89,6 +89,9 @@ pub struct Sheet {
     /// Whether the sheet has been modified since load/save.
     pub modified: bool,
 
+    /// When true, `d` marks rows pending-delete instead of immediately deleting them.
+    pub deferred_mode: bool,
+
     /// Undo stack for reversible mutations.
     pub undo_stack: UndoStack,
 
@@ -124,6 +127,7 @@ impl Sheet {
             sort_keys: Vec::new(),
             num_keys: 0,
             modified: false,
+            deferred_mode: false,
             undo_stack: UndoStack::new(),
             loading_state: LoadingState::default(),
             drill: None,
