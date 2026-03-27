@@ -113,6 +113,15 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme, e
     if all_visible.is_empty() {
         return sheet.top_row;
     }
+    // Show a centered message when there are no rows to display.
+    if sheet.rows.is_empty() {
+        use ratatui::widgets::Paragraph;
+        let msg = Paragraph::new("No rows.")
+            .style(theme.cell_null)
+            .alignment(Alignment::Center);
+        frame.render_widget(msg, area);
+        return 0;
+    }
     // Respect left_col scroll offset (GAP-010): slice off columns to the left.
     let left = sheet.left_col.min(all_visible.len().saturating_sub(1));
     let visible_cols: Vec<&visidata_core::Column> = all_visible[left..].to_vec();
@@ -155,16 +164,19 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme, e
 
     let widths: Vec<Constraint> = col_widths.iter().map(|&w| Constraint::Length(w)).collect();
 
-    // Build sort-key lookup: col_idx → direction indicator
-    let sort_indicator: std::collections::HashMap<usize, &'static str> = sheet.sort_keys
+    // Build sort-key lookup: col_idx → (priority, direction indicator).
+    // Priority is 1-based; shown as ↑1, ↓2 etc. for multi-key sorts.
+    let sort_info: std::collections::HashMap<usize, (usize, &'static str)> = sheet.sort_keys
         .iter()
-        .map(|sk| (sk.col_idx, match sk.direction {
+        .enumerate()
+        .map(|(pri, sk)| (sk.col_idx, (pri + 1, match sk.direction {
             SortDirection::Ascending  => "↑",
             SortDirection::Descending => "↓",
-        }))
+        })))
         .collect();
+    let multi_sort = sheet.sort_keys.len() > 1;
 
-    // Header row — hidden-column indicator (GAP-124) + sort indicators
+    // Header row — hidden-column indicator (GAP-124) + type indicator + sort indicators
     let header_cells: Vec<Cell<'_>> = visible_cols
         .iter()
         .enumerate()
@@ -172,14 +184,17 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme, e
             let style = theme.header_style(col.is_key, vi + left == sheet.cursor_col);
             // Find this col's position in sheet.columns for sort lookup
             let col_idx = sheet.columns.iter().position(|c| c.id == col.id).unwrap_or(usize::MAX);
-            let sort_suffix = sort_indicator.get(&col_idx).copied().unwrap_or("");
-            let label = if *has_hidden_before.get(vi).unwrap_or(&false) {
-                format!("…{}{sort_suffix}", col.name)
-            } else if sort_suffix.is_empty() {
-                col.name.clone()
-            } else {
-                format!("{}{sort_suffix}", col.name)
-            };
+            let sort_suffix = sort_info.get(&col_idx).map_or(String::new(), |&(pri, arrow)| {
+                if multi_sort {
+                    format!("{arrow}{pri}")
+                } else {
+                    arrow.to_owned()
+                }
+            });
+            // Type indicator character (e.g. #, %, ~, @, $)
+            let type_char = col.col_type.indicator();
+            let hidden_prefix = if *has_hidden_before.get(vi).unwrap_or(&false) { "…" } else { "" };
+            let label = format!("{hidden_prefix}{}{}{sort_suffix}", type_char, col.name);
             Cell::new(label).style(style)
         })
         .collect();

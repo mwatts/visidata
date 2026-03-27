@@ -197,9 +197,9 @@ pub fn builtin_commands() -> CommandRegistry {
     reg.add("zr", "go-row-number", "go to row by number");
     reg.add("c", "go-col-regex", "go to column matching regex");
     reg.add("zc", "go-col-number", "go to column by number");
-    reg.add("", "go-screen-top", "move cursor to top of visible screen");
-    reg.add("", "go-screen-middle", "move cursor to middle of visible screen");
-    reg.add("", "go-screen-bottom", "move cursor to bottom of visible screen");
+    reg.add("zH", "go-screen-top", "move cursor to top of visible screen");
+    reg.add("zM", "go-screen-middle", "move cursor to middle of visible screen");
+    reg.add("zL", "go-screen-bottom", "move cursor to bottom of visible screen");
     reg.add("", "jump-prev", "jump to previously active sheet (Ctrl+^)");
 
     // Sheet

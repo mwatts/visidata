@@ -830,7 +830,11 @@ impl App {
                     return;
                 }
                 ("z", KeyCode::Char('_')) => {
-                    self.mode = InputMode::ResizeColInput(LineEditor::new(""));
+                    // Pre-fill the current column width so the user can see the starting value.
+                    let cur_width = self.stack.active().and_then(|s| {
+                        s.visible_columns().get(s.cursor_col).and_then(|c| c.width)
+                    }).map_or(String::new(), |w| w.to_string());
+                    self.mode = InputMode::ResizeColInput(LineEditor::new(&cur_width));
                     return;
                 }
                 ("z", KeyCode::Char('s')) => {
@@ -851,6 +855,18 @@ impl App {
                 }
                 ("z", KeyCode::Char('x')) => {
                     self.dispatch_command("cut-cell");
+                    return;
+                }
+                ("z", KeyCode::Char('H')) => {
+                    self.dispatch_command("go-screen-top");
+                    return;
+                }
+                ("z", KeyCode::Char('M')) => {
+                    self.dispatch_command("go-screen-middle");
+                    return;
+                }
+                ("z", KeyCode::Char('L')) => {
+                    self.dispatch_command("go-screen-bottom");
                     return;
                 }
 
@@ -1047,11 +1063,11 @@ impl App {
             }
 
             // --- Type conversion (undoable) ---
-            KeyCode::Char('#') => set_cursor_col_type(sheet, ColumnType::Int),
-            KeyCode::Char('%') => set_cursor_col_type(sheet, ColumnType::Float),
-            KeyCode::Char('$') => set_cursor_col_type(sheet, ColumnType::Currency),
-            KeyCode::Char('~') => set_cursor_col_type(sheet, ColumnType::Text),
-            KeyCode::Char('@') => set_cursor_col_type(sheet, ColumnType::Date),
+            KeyCode::Char('#') => report_type_errors(set_cursor_col_type(sheet, ColumnType::Int), ColumnType::Int, &mut self.status),
+            KeyCode::Char('%') => report_type_errors(set_cursor_col_type(sheet, ColumnType::Float), ColumnType::Float, &mut self.status),
+            KeyCode::Char('$') => report_type_errors(set_cursor_col_type(sheet, ColumnType::Currency), ColumnType::Currency, &mut self.status),
+            KeyCode::Char('~') => report_type_errors(set_cursor_col_type(sheet, ColumnType::Text), ColumnType::Text, &mut self.status),
+            KeyCode::Char('@') => report_type_errors(set_cursor_col_type(sheet, ColumnType::Date), ColumnType::Date, &mut self.status),
 
             // --- Sorting ---
             KeyCode::Char('[') => {
@@ -2952,12 +2968,14 @@ impl App {
             // --- Group B: column types ---
             "type-any" => {
                 if let Some(s) = self.stack.active_mut() {
-                    set_cursor_col_type(s, visidata_core::ColumnType::Any);
+                    let errors = set_cursor_col_type(s, visidata_core::ColumnType::Any);
+                    report_type_errors(errors, visidata_core::ColumnType::Any, &mut self.status);
                 }
             }
             "type-len" => {
                 if let Some(s) = self.stack.active_mut() {
-                    set_cursor_col_type(s, visidata_core::ColumnType::Len);
+                    let errors = set_cursor_col_type(s, visidata_core::ColumnType::Len);
+                    report_type_errors(errors, visidata_core::ColumnType::Len, &mut self.status);
                 }
             }
 
@@ -3011,6 +3029,21 @@ impl App {
         if let Some(action) = action {
             // Re-apply the undo by cloning the action onto the redo stack before undoing
             self.redo_stack.push(action.clone());
+            // Build the description before consuming `action` in the match below.
+            let desc = match &action {
+                visidata_core::undo::UndoAction::SetCell { .. } => "edit cell".to_owned(),
+                visidata_core::undo::UndoAction::BulkSetCell { changes } => {
+                    format!("edit {} cells", changes.len())
+                }
+                visidata_core::undo::UndoAction::InsertRow { .. } => "add row".to_owned(),
+                visidata_core::undo::UndoAction::DeleteRow { .. } => "delete row".to_owned(),
+                visidata_core::undo::UndoAction::DeleteRows { entries } => {
+                    format!("delete {} rows", entries.len())
+                }
+                visidata_core::undo::UndoAction::RenameColumn { .. } => "rename column".to_owned(),
+                visidata_core::undo::UndoAction::SetColType { .. } => "set column type".to_owned(),
+                visidata_core::undo::UndoAction::ReorderRows { .. } => "reorder rows".to_owned(),
+            };
             // Now manually undo the action (replicate sheet.undo() logic inline
             // so we don't double-pop)
             match action {
@@ -3069,7 +3102,7 @@ impl App {
             if sheet.undo_stack.is_empty() {
                 sheet.modified = false;
             }
-            self.status = "undone".into();
+            self.status = format!("undone: {desc}");
         } else {
             self.status = "nothing to undo".into();
         }
@@ -3173,17 +3206,18 @@ impl App {
         let Some(sheet) = self.stack.active_mut() else {
             return;
         };
-        let result = match self.last_search_scope {
+        let prev_row = sheet.cursor_row;
+        let (result, col_idx) = match self.last_search_scope {
             SearchScope::CurrentCol => {
-                let col_idx = resolve_cursor_col_idx(sheet).unwrap_or(0);
-                if forward {
-                    sheet.search_forward(col_idx, pattern)
+                let ci = resolve_cursor_col_idx(sheet).unwrap_or(0);
+                let r = if forward {
+                    sheet.search_forward(ci, pattern)
                 } else {
-                    sheet.search_backward(col_idx, pattern)
-                }
+                    sheet.search_backward(ci, pattern)
+                };
+                (r, Some(ci))
             }
             SearchScope::KeyCols => {
-                // Search first key column, falling back to cursor column
                 let key_idx = sheet
                     .columns
                     .iter()
@@ -3193,14 +3227,28 @@ impl App {
                         || resolve_cursor_col_idx(sheet).unwrap_or(0),
                         |(i, _)| i,
                     );
-                if forward {
+                let r = if forward {
                     sheet.search_forward(key_idx, pattern)
                 } else {
                     sheet.search_backward(key_idx, pattern)
-                }
+                };
+                (r, Some(key_idx))
             }
         };
         if let Some(row_idx) = result {
+            let wrapped = if forward {
+                row_idx < prev_row
+            } else {
+                row_idx > prev_row
+            };
+            let total = col_idx.map_or(0, |ci| sheet.count_matches(ci, pattern));
+            let wrap_suffix = if wrapped { " (wrapped)" } else { "" };
+            let match_info = if total > 1 {
+                format!(" — {total} matches")
+            } else {
+                String::new()
+            };
+            self.status = format!("found: {pattern}{match_info}{wrap_suffix}");
             sheet.cursor_row = row_idx;
         } else {
             self.status = format!("not found: {pattern}");
@@ -3215,12 +3263,26 @@ impl App {
         let Some(sheet) = self.stack.active_mut() else {
             return;
         };
+        let prev_row = sheet.cursor_row;
         let result = if forward {
             sheet.search_forward_all_cols(pattern)
         } else {
             sheet.search_backward_all_cols(pattern)
         };
         if let Some(row_idx) = result {
+            let wrapped = if forward {
+                row_idx < prev_row
+            } else {
+                row_idx > prev_row
+            };
+            let total = sheet.count_matches_all_cols(pattern);
+            let wrap_suffix = if wrapped { " (wrapped)" } else { "" };
+            let match_info = if total > 1 {
+                format!(" — {total} matches")
+            } else {
+                String::new()
+            };
+            self.status = format!("found: {pattern}{match_info}{wrap_suffix}");
             sheet.cursor_row = row_idx;
         } else {
             self.status = format!("not found: {pattern}");
@@ -3788,11 +3850,45 @@ fn resize_all_columns(sheet: &mut Sheet) {
 }
 
 /// Set the column type for the current cursor column, with undo tracking.
-fn set_cursor_col_type(sheet: &mut Sheet, col_type: ColumnType) {
-    let vis = sheet.visible_columns();
-    if let Some(&col) = vis.get(sheet.cursor_col) {
-        sheet.set_col_type(col.id.0, col_type);
+/// Write a status message when a type-change produces conversion failures.
+///
+/// For types like `Text` or `Any` that never fail, `error_count` will be 0
+/// and no message is written (the caller's existing status update suffices).
+fn report_type_errors(error_count: usize, col_type: ColumnType, status: &mut String) {
+    if error_count > 0 {
+        let type_name = match col_type {
+            ColumnType::Int      => "int",
+            ColumnType::Float    => "float",
+            ColumnType::Currency => "currency",
+            ColumnType::Date     => "date",
+            ColumnType::Bool     => "bool",
+            ColumnType::Len      => "len",
+            ColumnType::Text | ColumnType::Any => return,
+        };
+        *status = format!("{error_count} cells failed to convert to {type_name}");
     }
+}
+
+/// Set the type of the column under the cursor.
+///
+/// Returns the number of rows whose values fail to coerce to the new type,
+/// so the caller can report conversion failures in the status bar.
+fn set_cursor_col_type(sheet: &mut Sheet, col_type: ColumnType) -> usize {
+    let vis = sheet.visible_columns();
+    let Some(&col_ref) = vis.get(sheet.cursor_col) else {
+        return 0;
+    };
+    let col_id = col_ref.id.0;
+    sheet.set_col_type(col_id, col_type);
+    // Count cells that fail coercion under the new type.
+    let Some(col_idx) = sheet.columns.iter().position(|c| c.id.0 == col_id) else {
+        return 0;
+    };
+    sheet
+        .rows
+        .iter()
+        .filter(|row| sheet.columns[col_idx].typed_value(row).is_error())
+        .count()
 }
 
 /// Resolve the actual column index for the cursor's visible column position.

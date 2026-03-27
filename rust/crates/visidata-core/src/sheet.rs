@@ -541,6 +541,50 @@ impl Sheet {
         None
     }
 
+    /// Count rows matching a regex pattern in the given column.
+    ///
+    /// Returns 0 if the pattern is invalid or the column index is out of range.
+    #[must_use]
+    pub fn count_matches(&self, col_idx: usize, pattern: &str) -> usize {
+        let Ok(re) = regex::Regex::new(pattern) else {
+            return 0;
+        };
+        let Some(col) = self.columns.get(col_idx) else {
+            return 0;
+        };
+        self.rows
+            .iter()
+            .filter(|row| re.is_match(&col.display_value(row)))
+            .count()
+    }
+
+    /// Count rows matching a regex pattern in any visible column.
+    ///
+    /// Returns 0 if the pattern is invalid.
+    #[must_use]
+    pub fn count_matches_all_cols(&self, pattern: &str) -> usize {
+        let Ok(re) = regex::Regex::new(pattern) else {
+            return 0;
+        };
+        let col_indices: Vec<usize> = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| !c.is_hidden())
+            .map(|(i, _)| i)
+            .collect();
+        self.rows
+            .iter()
+            .filter(|row| {
+                col_indices.iter().any(|&ci| {
+                    self.columns
+                        .get(ci)
+                        .is_some_and(|col| re.is_match(&col.display_value(row)))
+                })
+            })
+            .count()
+    }
+
     /// Search backward across all visible columns for a regex match.
     #[must_use]
     pub fn search_backward_all_cols(&self, pattern: &str) -> Option<usize> {
