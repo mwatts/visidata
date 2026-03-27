@@ -44,6 +44,8 @@ enum InputMode {
     CommandPalette(LineEditor),
     /// Menu navigation mode.
     Menu,
+    /// Floating keybindings help overlay.
+    Help { scroll: usize },
 }
 
 /// Application state for the TUI.
@@ -176,6 +178,7 @@ impl App {
                     Event::Key(key) => match &self.mode {
                         InputMode::Normal => self.handle_normal_key(key),
                         InputMode::Menu => self.handle_menu_key(key),
+                        InputMode::Help { .. } => self.handle_help_key(key),
                         InputMode::RenameColumn(_)
                         | InputMode::EditCell(_)
                         | InputMode::SearchForward(_)
@@ -253,65 +256,23 @@ impl App {
         let area = frame.area();
 
         if let Some(sheet) = self.stack.active() {
-            let input_text = match &self.mode {
-                InputMode::Normal => None,
+            // Overlays (Menu, Help, CommandPalette) draw themselves on top of the
+            // sheet. For those modes we pass `None` as the input line so no input
+            // bar is shown in the sheet area.
+            let input_text: Option<String> = match &self.mode {
                 InputMode::RenameColumn(editor) => {
                     Some(format!("rename column: {}", editor.text()))
                 }
                 InputMode::EditCell(editor) => Some(format!("edit: {}", editor.text())),
                 InputMode::SearchForward(editor) => Some(format!("/{}", editor.text())),
                 InputMode::SearchBackward(editor) => Some(format!("?{}", editor.text())),
-                InputMode::CommandPalette(editor) => {
-                    let query = editor.text();
-                    let matches = self.commands.search_commands(&query);
-                    let hint = matches.first().map_or("", |c| c.longname.as_str());
-                    Some(format!("command: {query}  → {hint}"))
-                }
-                InputMode::Menu => {
-                    let menu_labels: Vec<&str> = self
-                        .menu_bar
-                        .menus
-                        .iter()
-                        .map(visidata_core::menu::MenuItem::label)
-                        .collect();
-                    let selected = self.menu_state.menu_idx;
-                    let bar_text: String = menu_labels
-                        .iter()
-                        .enumerate()
-                        .map(|(i, label)| {
-                            if i == selected {
-                                format!("[{label}]")
-                            } else {
-                                (*label).to_owned()
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("  ");
-
-                    // Show items of selected menu.
-                    let items_text = if let Some(MenuItem::Submenu { items, .. }) =
-                        self.menu_bar.menus.get(selected)
-                    {
-                        let item_idx = self.menu_state.item_idx;
-                        items
-                            .iter()
-                            .enumerate()
-                            .map(|(i, item)| {
-                                if i == item_idx {
-                                    format!("> {}", item.label())
-                                } else {
-                                    format!("  {}", item.label())
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                            .join(" | ")
-                    } else {
-                        String::new()
-                    };
-
-                    Some(format!("{bar_text}\n{items_text}"))
-                }
+                // These modes render as overlays; suppress the inline input bar.
+                InputMode::Normal
+                | InputMode::CommandPalette(_)
+                | InputMode::Menu
+                | InputMode::Help { .. } => None,
             };
+
             renderer::draw_sheet(
                 frame,
                 area,
@@ -320,6 +281,27 @@ impl App {
                 input_text.as_deref(),
                 &self.theme,
             );
+
+            // Render overlay modes on top of the sheet.
+            if let InputMode::Help { scroll } = self.mode {
+                renderer::draw_help_overlay(frame, area, &self.commands, scroll, &self.theme);
+            }
+
+            if matches!(self.mode, InputMode::Menu) {
+                renderer::draw_menu_overlay(
+                    frame,
+                    area,
+                    &self.menu_bar,
+                    &self.menu_state,
+                    &self.theme,
+                );
+            }
+
+            if let InputMode::CommandPalette(ref editor) = self.mode {
+                let query = editor.text();
+                let matches = self.commands.search_commands(&query);
+                renderer::draw_command_palette(frame, area, &query, &matches, &self.theme);
+            }
         } else {
             let text = Text::raw("No sheets open. Press q to quit.");
             frame.render_widget(text, area);
@@ -664,7 +646,13 @@ impl App {
                 return;
             }
 
-            // --- Help & Command palette ---
+            // --- Help overlay ---
+            KeyCode::F(1) => {
+                self.mode = InputMode::Help { scroll: 0 };
+                return;
+            }
+
+            // --- Command palette ---
             KeyCode::Char(':' | ' ') => {
                 self.mode = InputMode::CommandPalette(LineEditor::new(""));
                 return;
@@ -804,7 +792,7 @@ impl App {
                     self.mode = InputMode::CommandPalette(editor);
                 }
             },
-            InputMode::Normal | InputMode::Menu => unreachable!(),
+            InputMode::Normal | InputMode::Menu | InputMode::Help { .. } => unreachable!(),
         }
 
         self.update_status();
@@ -1243,6 +1231,36 @@ impl App {
             _ => {}
         }
         self.update_status();
+    }
+
+    /// Handle a key event while the help overlay is open.
+    fn handle_help_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::F(1) => {
+                self.mode = InputMode::Normal;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let InputMode::Help { scroll } = &mut self.mode {
+                    *scroll = scroll.saturating_add(1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let InputMode::Help { scroll } = &mut self.mode {
+                    *scroll = scroll.saturating_sub(1);
+                }
+            }
+            KeyCode::PageDown => {
+                if let InputMode::Help { scroll } = &mut self.mode {
+                    *scroll = scroll.saturating_add(20);
+                }
+            }
+            KeyCode::PageUp => {
+                if let InputMode::Help { scroll } = &mut self.mode {
+                    *scroll = scroll.saturating_sub(20);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Join the top two sheets on the stack by key columns (inner join).
