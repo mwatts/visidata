@@ -144,6 +144,13 @@ pub struct Column {
     /// Whether this column is a key column (used for joins, grouping).
     pub is_key: bool,
 
+    /// Rhai expression for lazy-evaluated computed columns (GAP-103).
+    ///
+    /// When set, `eval_expr_value` evaluates this expression per row at
+    /// render time. Other column values are injected into scope by name.
+    /// `None` means the column reads from `row.values[source_idx]` directly.
+    pub expr: Option<String>,
+
     /// Optional display format string sourced from options.
     ///
     /// - Float/Currency: printf-style `"%.2f"` → 2 decimal places
@@ -165,6 +172,7 @@ impl Column {
             width: None,
             col_type: ColumnType::default(),
             is_key: false,
+            expr: None,
             fmt: None,
         }
     }
@@ -215,6 +223,53 @@ impl Column {
     #[must_use]
     pub fn is_hidden(&self) -> bool {
         self.width == Some(0)
+    }
+
+    /// Evaluate this column's expression against a row, returning the result.
+    ///
+    /// Other columns are injected into the Rhai scope by name.
+    /// Falls back to `self.typed_value(row)` when `self.expr` is `None`.
+    #[must_use]
+    pub fn eval_expr_value(&self, engine: &rhai::Engine, columns: &[Self], row: &Row) -> Value {
+        let Some(ref expr) = self.expr else {
+            return self.typed_value(row);
+        };
+        let mut scope = rhai::Scope::new();
+        for col in columns {
+            if col.id == self.id {
+                continue;
+            }
+            match col.raw_value(row) {
+                Value::Int(n)    => { scope.push(col.name.as_str(), *n); }
+                Value::Float(f)  => { scope.push(col.name.as_str(), *f); }
+                Value::Bool(b)   => { scope.push(col.name.as_str(), *b); }
+                Value::Text(s)   => { scope.push(col.name.as_str(), s.clone()); }
+                _                => { scope.push(col.name.as_str(), rhai::Dynamic::UNIT); }
+            }
+        }
+        match engine.eval_with_scope::<rhai::Dynamic>(&mut scope, expr) {
+            Ok(d)  => rhai_dynamic_to_value(d),
+            Err(e) => Value::Error(format!("{e}")),
+        }
+    }
+}
+
+/// Convert a `rhai::Dynamic` value into a `Value`.
+///
+/// Takes `d` by value so it can be used as `map(rhai_dynamic_to_value)`.
+#[must_use]
+#[expect(clippy::needless_pass_by_value, reason = "used as fn-pointer via .map()")]
+pub fn rhai_dynamic_to_value(d: rhai::Dynamic) -> Value {
+    #[expect(clippy::option_if_let_else, reason = "multi-branch chain is clearer")]
+    if let Ok(i) = d.as_int() {
+        Value::Int(i)
+    } else if let Ok(f) = d.as_float() {
+        Value::Float(f)
+    } else if let Ok(b) = d.as_bool() {
+        Value::Bool(b)
+    } else {
+        d.clone().into_string()
+            .map_or_else(|_| Value::Text(format!("{d}")), Value::Text)
     }
 }
 

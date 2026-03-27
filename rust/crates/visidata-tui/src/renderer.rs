@@ -25,6 +25,7 @@ pub fn draw_sheet(
     status: &str,
     input_line: Option<&str>,
     theme: &Theme,
+    engine: &rhai::Engine,
 ) {
     use ratatui::widgets::LineGauge;
     use visidata_core::async_loader::LoadingState;
@@ -45,7 +46,7 @@ pub fn draw_sheet(
         .split(area)
     };
 
-    draw_table(frame, chunks[0], sheet, theme);
+    draw_table(frame, chunks[0], sheet, theme, engine);
 
     let status_area = if has_input {
         let input_text = input_line.unwrap_or("");
@@ -85,7 +86,7 @@ pub fn draw_sheet(
     reason = "display widths won't exceed u16::MAX"
 )]
 #[expect(clippy::too_many_lines, reason = "renderer — splitting would not improve clarity")]
-fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme) {
+fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme, engine: &rhai::Engine) {
     let visible_cols = sheet.visible_columns();
     if visible_cols.is_empty() {
         return;
@@ -168,8 +169,17 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme) {
                 .iter()
                 .enumerate()
                 .map(|(vi, col)| {
-                    let raw_value = col.raw_value(row);
-                    let display = col.display_value(row);
+                    // Use lazy expr eval when the column has an expression (GAP-103).
+                    let raw_value = if col.expr.is_some() {
+                        col.eval_expr_value(engine, &sheet.columns, row)
+                    } else {
+                        col.typed_value(row)
+                    };
+                    let display = if col.expr.is_some() {
+                        raw_value.to_string()
+                    } else {
+                        col.display_value(row)
+                    };
                     let (clipped, _) =
                         cliptext::clipstr(&display, Some(col_widths[vi] as usize), "…");
 

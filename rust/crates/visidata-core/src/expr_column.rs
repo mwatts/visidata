@@ -1,88 +1,36 @@
-//! Expression column support.
+//! Expression column support — lazy per-render evaluation (GAP-103).
 //!
-//! Allows creating computed columns whose values are derived from
-//! a Rhai expression evaluated against each row's values.
+//! `add_expression_column` sets `col.expr` and reserves a `source_idx` slot
+//! but does **not** materialise values at add time.  The renderer calls
+//! `col.eval_expr_value(engine, columns, row)` each frame so values are
+//! always current even after edits, sorts, or filters.
 
 use crate::column::{Column, ColumnId};
 use crate::sheet::Sheet;
-use crate::value::Value;
 
-/// Add a computed expression column to a sheet.
+/// Add a lazy computed expression column to a sheet.
 ///
-/// The expression can reference column values by name. For each row,
-/// column values are made available as variables, and the expression
-/// is evaluated to produce the cell value.
-///
-/// This is a simplified version that evaluates expressions against
-/// a scope containing column values as string variables.
+/// The column is given a `source_idx` slot (initialised to `Null`) and its
+/// expression is stored in `col.expr`.  The actual evaluation happens at
+/// render time via `Column::eval_expr_value`.
 pub fn add_expression_column(sheet: &mut Sheet, name: &str, expression: &str) {
     let col_id = ColumnId(sheet.columns.len());
     let source_idx = sheet.columns.len();
-    let col = Column::new(col_id, name, source_idx);
-    sheet.columns.push(col);
-
-    // Evaluate the expression for each row and store the result.
-    let engine = rhai::Engine::new();
+    let mut col = Column::new(col_id, name, source_idx);
+    col.expr = Some(expression.to_owned());
+    // Extend existing rows with a Null placeholder (filled lazily at render).
     for row in &mut sheet.rows {
-        let mut scope = rhai::Scope::new();
-
-        // Add each column's value as a variable in the scope.
-        for (i, c) in sheet.columns.iter().enumerate() {
-            if i == source_idx {
-                continue; // skip the new column itself
-            }
-            let val = row.get(c.source_idx);
-            match val {
-                Value::Int(n) => {
-                    scope.push(&c.name, *n);
-                }
-                Value::Float(f) => {
-                    scope.push(&c.name, *f);
-                }
-                Value::Bool(b) => {
-                    scope.push(&c.name, *b);
-                }
-                Value::Text(s) => {
-                    scope.push(&c.name, s.clone());
-                }
-                _ => {
-                    scope.push(&c.name, rhai::Dynamic::UNIT);
-                }
-            }
-        }
-
-        let result = engine.eval_with_scope::<rhai::Dynamic>(&mut scope, expression);
-        let value = match result {
-            Ok(dyn_val) =>
-            {
-                #[expect(
-                    clippy::option_if_let_else,
-                    reason = "multi-branch chain; map_or_else nesting is worse"
-                )]
-                if let Ok(i) = dyn_val.as_int() {
-                    Value::Int(i)
-                } else if let Ok(f) = dyn_val.as_float() {
-                    Value::Float(f)
-                } else if let Ok(b) = dyn_val.as_bool() {
-                    Value::Bool(b)
-                } else {
-                    dyn_val
-                        .clone()
-                        .into_string()
-                        .map_or_else(|_| Value::Text(format!("{dyn_val}")), Value::Text)
-                }
-            }
-            Err(e) => Value::Error(format!("{e}")),
-        };
-
-        row.set(source_idx, value);
+        row.set(source_idx, crate::value::Value::Null);
     }
+    sheet.columns.push(col);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::column::ColumnId;
     use crate::row::Row;
+    use crate::value::Value;
 
     fn sample_sheet() -> Sheet {
         let columns = vec![
@@ -96,6 +44,16 @@ mod tests {
         Sheet::with_data("test", columns, rows)
     }
 
+    /// Evaluate all expression columns for all rows using a fresh Engine.
+    fn eval_all(sheet: &Sheet) -> Vec<Vec<Value>> {
+        let engine = rhai::Engine::new();
+        sheet.rows.iter().map(|row| {
+            sheet.columns.iter().map(|col| {
+                col.eval_expr_value(&engine, &sheet.columns, row)
+            }).collect()
+        }).collect()
+    }
+
     #[test]
     fn add_sum_column() {
         let mut sheet = sample_sheet();
@@ -103,8 +61,11 @@ mod tests {
 
         assert_eq!(sheet.num_cols(), 3);
         assert_eq!(sheet.columns[2].name, "sum");
-        assert_eq!(sheet.get_cell(0, 2), Value::Int(30));
-        assert_eq!(sheet.get_cell(1, 2), Value::Int(7));
+        assert!(sheet.columns[2].expr.is_some());
+
+        let vals = eval_all(&sheet);
+        assert_eq!(vals[0][2], Value::Int(30));
+        assert_eq!(vals[1][2], Value::Int(7));
     }
 
     #[test]
@@ -112,8 +73,9 @@ mod tests {
         let mut sheet = sample_sheet();
         add_expression_column(&mut sheet, "product", "a * b");
 
-        assert_eq!(sheet.get_cell(0, 2), Value::Int(200));
-        assert_eq!(sheet.get_cell(1, 2), Value::Int(12));
+        let vals = eval_all(&sheet);
+        assert_eq!(vals[0][2], Value::Int(200));
+        assert_eq!(vals[1][2], Value::Int(12));
     }
 
     #[test]
@@ -126,7 +88,9 @@ mod tests {
         let mut sheet = Sheet::with_data("test", columns, rows);
         add_expression_column(&mut sheet, "greeting", r#""Hello " + name"#);
 
-        assert_eq!(sheet.get_cell(0, 1), Value::Text("Hello Alice".into()));
+        let engine = rhai::Engine::new();
+        let val = sheet.columns[1].eval_expr_value(&engine, &sheet.columns, &sheet.rows[0]);
+        assert_eq!(val, Value::Text("Hello Alice".into()));
     }
 
     #[test]
@@ -134,7 +98,28 @@ mod tests {
         let mut sheet = sample_sheet();
         add_expression_column(&mut sheet, "bad", "undefined_var");
 
-        // Should produce an error value.
-        assert!(sheet.get_cell(0, 2).is_error());
+        let engine = rhai::Engine::new();
+        let val = sheet.columns[2].eval_expr_value(&engine, &sheet.columns, &sheet.rows[0]);
+        assert!(val.is_error());
+    }
+
+    #[test]
+    fn expr_column_placeholder_is_null() {
+        // Before eval, the slot in each row is Null.
+        let mut sheet = sample_sheet();
+        add_expression_column(&mut sheet, "computed", "a + b");
+        assert_eq!(sheet.rows[0].get(2), &Value::Null);
+    }
+
+    #[test]
+    fn expr_col_reflects_mutation() {
+        // After editing a source cell, re-evaluation picks up the new value.
+        let mut sheet = sample_sheet();
+        add_expression_column(&mut sheet, "sum", "a + b");
+        sheet.set_cell(0, 0, Value::Int(100)); // change `a` in row 0
+
+        let engine = rhai::Engine::new();
+        let val = sheet.columns[2].eval_expr_value(&engine, &sheet.columns, &sheet.rows[0]);
+        assert_eq!(val, Value::Int(120)); // 100 + 20
     }
 }

@@ -22,6 +22,7 @@ use visidata_core::{
     menu::{MenuBar, MenuItem, MenuState, builtin_menu_bar},
     options::OptionsManager,
 };
+use visidata_scripting::ScriptEngine;
 
 use crate::input::{EditResult, LineEditor};
 use crate::renderer;
@@ -196,6 +197,9 @@ pub struct App {
     /// Whether quitguard is waiting for a second `q` press.
     pending_quit: bool,
 
+    /// Rhai scripting engine — shared across all expression evaluations.
+    script_engine: ScriptEngine,
+
     /// All sheets ever pushed in this session (names, for gS).
     all_sheet_names: Vec<String>,
 
@@ -243,6 +247,7 @@ impl App {
             prev_sheet_idx: None,
             last_errors: std::collections::VecDeque::new(),
             pending_quit: false,
+            script_engine: ScriptEngine::new(),
             all_sheet_names: Vec::new(),
             command_log: Vec::new(),
         }
@@ -435,6 +440,7 @@ impl App {
                 &self.status,
                 input_text.as_deref(),
                 &self.theme,
+                self.script_engine.engine(),
             );
 
             // Render overlay modes on top of the sheet.
@@ -555,6 +561,10 @@ impl App {
                 }
                 ("g", KeyCode::Char('e')) => {
                     self.mode = InputMode::SetColInput(LineEditor::new(""));
+                    return;
+                }
+                ("g", KeyCode::Char('=')) => {
+                    self.mode = InputMode::CommandPalette(LineEditor::new("g="));
                     return;
                 }
                 ("g", KeyCode::Char('^')) => {
@@ -750,12 +760,11 @@ impl App {
                     self.dispatch_command("addcol-new");
                     return;
                 }
+                ("z", KeyCode::Char('=')) => {
+                    self.mode = InputMode::CommandPalette(LineEditor::new("z="));
+                    return;
+                }
                 ("z", KeyCode::Char('|')) => {
-                    self.mode = InputMode::SelectColRegex {
-                        editor: LineEditor::new(""),
-                        select: true,
-                    };
-                    // Override to expression mode
                     self.mode = InputMode::CommandPalette(LineEditor::new("select-expr:"));
                     return;
                 }
@@ -1620,6 +1629,7 @@ impl App {
     }
 
     /// Execute a command by searching the registry for a query match.
+    #[expect(clippy::too_many_lines, reason = "palette prefix dispatch table")]
     fn execute_command_by_query(&mut self, query: &str) {
         if query.is_empty() {
             return;
@@ -1705,6 +1715,133 @@ impl App {
                 }
             }
             return;
+        }
+
+        // g= — set selected rows' current column from expression
+        if let Some(expr) = query.strip_prefix("g=") {
+            if let Some(sheet) = self.stack.active_mut()
+                && let Some(col_idx) = resolve_cursor_col_idx(sheet)
+            {
+                let source_idx = sheet.columns[col_idx].source_idx;
+                let selected: Vec<usize> = sheet.rows.iter().enumerate()
+                    .filter(|(_, r)| r.selected)
+                    .map(|(i, _)| i)
+                    .collect();
+                let engine = self.script_engine.engine();
+                let results: Vec<(usize, visidata_core::Value)> = selected.iter().map(|&ri| {
+                    let mut scope = rhai::Scope::new();
+                    for col in &sheet.columns {
+                        match col.raw_value(&sheet.rows[ri]) {
+                            visidata_core::Value::Int(n)   => { scope.push(col.name.as_str(), *n); }
+                            visidata_core::Value::Float(f) => { scope.push(col.name.as_str(), *f); }
+                            visidata_core::Value::Bool(b)  => { scope.push(col.name.as_str(), *b); }
+                            visidata_core::Value::Text(s)  => { scope.push(col.name.as_str(), s.clone()); }
+                            _ => { scope.push(col.name.as_str(), rhai::Dynamic::UNIT); }
+                        }
+                    }
+                    let val = engine.eval_with_scope::<rhai::Dynamic>(&mut scope, expr)
+                        .map_or_else(|e| visidata_core::Value::Error(format!("{e}")), visidata_core::rhai_dynamic_to_value);
+                    (ri, val)
+                }).collect();
+                let count = results.len();
+                for (ri, val) in results {
+                    sheet.set_cell(ri, source_idx, val);
+                }
+                self.status = format!("set {count} rows");
+            }
+            return;
+        }
+
+        // z= — set cursor cell from expression
+        if let Some(expr) = query.strip_prefix("z=") {
+            if let Some(sheet) = self.stack.active_mut()
+                && !sheet.rows.is_empty()
+                && let Some(col_idx) = resolve_cursor_col_idx(sheet)
+            {
+                let source_idx = sheet.columns[col_idx].source_idx;
+                let ri = sheet.cursor_row;
+                let mut scope = rhai::Scope::new();
+                for col in &sheet.columns {
+                    match col.raw_value(&sheet.rows[ri]) {
+                        visidata_core::Value::Int(n)   => { scope.push(col.name.as_str(), *n); }
+                        visidata_core::Value::Float(f) => { scope.push(col.name.as_str(), *f); }
+                        visidata_core::Value::Bool(b)  => { scope.push(col.name.as_str(), *b); }
+                        visidata_core::Value::Text(s)  => { scope.push(col.name.as_str(), s.clone()); }
+                        _ => { scope.push(col.name.as_str(), rhai::Dynamic::UNIT); }
+                    }
+                }
+                let val = self.script_engine.engine()
+                    .eval_with_scope::<rhai::Dynamic>(&mut scope, expr)
+                    .map_or_else(|e| visidata_core::Value::Error(format!("{e}")), visidata_core::rhai_dynamic_to_value);
+                sheet.set_cell(ri, source_idx, val);
+            }
+            return;
+        }
+
+        // select-expr: / unselect-expr: — select/unselect rows matching a Rhai expression
+        for (prefix, select) in [("select-expr:", true), ("unselect-expr:", false)] {
+            if let Some(expr) = query.strip_prefix(prefix) {
+                if let Some(sheet) = self.stack.active_mut() {
+                    let engine = self.script_engine.engine();
+                    let mut count = 0usize;
+                    // Collect (row_idx, result) first to avoid borrow conflict
+                    let results: Vec<bool> = sheet.rows.iter().map(|row| {
+                        let mut scope = rhai::Scope::new();
+                        for col in &sheet.columns {
+                            match col.raw_value(row) {
+                                visidata_core::Value::Int(n)   => { scope.push(col.name.as_str(), *n); }
+                                visidata_core::Value::Float(f) => { scope.push(col.name.as_str(), *f); }
+                                visidata_core::Value::Bool(b)  => { scope.push(col.name.as_str(), *b); }
+                                visidata_core::Value::Text(s)  => { scope.push(col.name.as_str(), s.clone()); }
+                                _ => { scope.push(col.name.as_str(), rhai::Dynamic::UNIT); }
+                            }
+                        }
+                        engine.eval_with_scope::<bool>(&mut scope, expr).unwrap_or(false)
+                    }).collect();
+                    for (row, matched) in sheet.rows.iter_mut().zip(results) {
+                        if matched { row.selected = select; count += 1; }
+                    }
+                    let verb = if select { "selected" } else { "unselected" };
+                    self.status = format!("{verb} {count} rows");
+                }
+                return;
+            }
+        }
+
+        // search-expr: / searchr-expr: — advance cursor to first truthy row
+        for (prefix, forward) in [("search-expr:", true), ("searchr-expr:", false)] {
+            if let Some(expr) = query.strip_prefix(prefix) {
+                if let Some(sheet) = self.stack.active_mut() {
+                    let engine = self.script_engine.engine();
+                    let n = sheet.rows.len();
+                    let start = if forward { sheet.cursor_row + 1 } else { sheet.cursor_row.saturating_sub(1) };
+                    let iter: Box<dyn Iterator<Item = usize>> = if forward {
+                        Box::new((start..n).chain(0..start))
+                    } else {
+                        Box::new((0..start).rev().chain((start..n).rev()))
+                    };
+                    let mut found = None;
+                    for i in iter {
+                        let mut scope = rhai::Scope::new();
+                        for col in &sheet.columns {
+                            match col.raw_value(&sheet.rows[i]) {
+                                visidata_core::Value::Int(n)   => { scope.push(col.name.as_str(), *n); }
+                                visidata_core::Value::Float(f) => { scope.push(col.name.as_str(), *f); }
+                                visidata_core::Value::Bool(b)  => { scope.push(col.name.as_str(), *b); }
+                                visidata_core::Value::Text(s)  => { scope.push(col.name.as_str(), s.clone()); }
+                                _ => { scope.push(col.name.as_str(), rhai::Dynamic::UNIT); }
+                            }
+                        }
+                        if engine.eval_with_scope::<bool>(&mut scope, expr).unwrap_or(false) {
+                            found = Some(i);
+                            break;
+                        }
+                    }
+                    if let Some(i) = found { sheet.cursor_row = i; }
+                    else { self.status = format!("not found: {expr}"); }
+                }
+                return;
+            }
         }
 
         // memo-agg: (`z+` key) — show one aggregation in status

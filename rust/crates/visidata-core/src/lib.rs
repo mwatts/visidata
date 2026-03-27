@@ -17,7 +17,7 @@ pub mod typeinfer;
 pub mod undo;
 mod value;
 
-pub use column::{Column, ColumnId, ColumnType};
+pub use column::{Column, ColumnId, ColumnType, rhai_dynamic_to_value};
 pub use commands::{CommandInfo, CommandRegistry, KeystrokeOutcome, builtin_commands};
 pub use row::{Row, RowId};
 pub use sheet::{DrillAction, Sheet, SheetId, SortDirection, SortKey};
