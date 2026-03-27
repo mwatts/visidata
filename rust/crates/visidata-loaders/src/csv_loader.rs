@@ -102,8 +102,24 @@ fn load_delimited(path: &Path, delimiter: u8, quote: u8) -> Result<Sheet> {
     }
 
     let mut sheet = Sheet::with_data(name, columns, rows);
+    infer_column_types(&mut sheet);
     sheet.source = Some(path.to_path_buf());
     Ok(sheet)
+}
+
+/// Infer and apply column types for all columns in a sheet.
+///
+/// Samples up to 500 rows per column. Leaves columns as `Text` when no
+/// stronger type can be determined (fix #2).
+fn infer_column_types(sheet: &mut Sheet) {
+    for ci in 0..sheet.columns.len() {
+        let values: Vec<&Value> = sheet.rows.iter()
+            .take(500)
+            .map(|r| sheet.columns[ci].raw_value(r))
+            .collect();
+        let inferred = visidata_core::typeinfer::infer_column_type(&values, 500);
+        sheet.columns[ci].col_type = inferred;
+    }
 }
 
 /// Load a delimited file from a string (for testing and stdin).
@@ -167,9 +183,9 @@ mod tests {
         assert_eq!(sheet.columns[1].name, "age");
         assert_eq!(sheet.columns[2].name, "city");
 
-        // Check first row
+        // Check first row — age column is inferred as Int
         assert_eq!(sheet.get_cell(0, 0), Value::Text("Alice".into()));
-        assert_eq!(sheet.get_cell(0, 1), Value::Text("30".into()));
+        assert_eq!(sheet.get_cell(0, 1), Value::Int(30));
         assert_eq!(sheet.get_cell(0, 2), Value::Text("New York".into()));
 
         // Check source path

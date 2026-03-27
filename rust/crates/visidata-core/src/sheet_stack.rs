@@ -61,6 +61,14 @@ impl SheetStack {
     pub fn as_slice(&self) -> &[Sheet] {
         &self.sheets
     }
+
+    /// Swap two sheets by index (no-op if either index is out of bounds).
+    pub fn swap(&mut self, a: usize, b: usize) {
+        let len = self.sheets.len();
+        if a < len && b < len {
+            self.sheets.swap(a, b);
+        }
+    }
 }
 
 #[cfg(test)]

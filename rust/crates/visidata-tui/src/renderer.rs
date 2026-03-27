@@ -6,18 +6,38 @@ use ratatui::widgets::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use visidata_core::{Sheet, Value};
+use visidata_core::{Sheet, SortDirection, Value};
 
 use crate::cliptext;
 use crate::theme::{CellContext, Theme};
 
-/// Maximum column width in characters.
-const MAX_COL_WIDTH: u16 = 40;
+/// Maximum column width for auto-fit (characters). Matches Python's default.
+const MAX_COL_WIDTH: u16 = 80;
 
 /// Minimum column width in characters.
 const MIN_COL_WIDTH: u16 = 3;
 
+/// Compute how many visible columns fit within `area_width` starting at `left_col`.
+///
+/// Used by the input handler to decide when to scroll `left_col`.
+#[must_use]
+pub fn cols_fitting_in_width(sheet: &Sheet, area_width: u16) -> usize {
+    let visible = sheet.visible_columns();
+    let left = sheet.left_col.min(visible.len().saturating_sub(1));
+    let mut used: u16 = 0;
+    let mut count = 0;
+    for col in visible.iter().skip(left) {
+        let w = col.width.unwrap_or(20).min(MAX_COL_WIDTH) + 1; // +1 for column spacing
+        if used + w > area_width { break; }
+        used += w;
+        count += 1;
+    }
+    count.max(1)
+}
+
 /// Draw a sheet into the given frame area.
+///
+/// Returns the computed `top_row` so the caller can write it back to the sheet.
 pub fn draw_sheet(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -26,7 +46,7 @@ pub fn draw_sheet(
     input_line: Option<&str>,
     theme: &Theme,
     engine: &rhai::Engine,
-) {
+) -> usize {
     use ratatui::widgets::LineGauge;
     use visidata_core::async_loader::LoadingState;
 
@@ -46,7 +66,7 @@ pub fn draw_sheet(
         .split(area)
     };
 
-    draw_table(frame, chunks[0], sheet, theme, engine);
+    let computed_top_row = draw_table(frame, chunks[0], sheet, theme, engine);
 
     let status_area = if has_input {
         let input_text = input_line.unwrap_or("");
@@ -78,6 +98,8 @@ pub fn draw_sheet(
     } else {
         draw_status_bar(frame, status_area, status, theme);
     }
+
+    computed_top_row
 }
 
 /// Draw the table (header + data rows) with cursor highlighting.
@@ -86,10 +108,10 @@ pub fn draw_sheet(
     reason = "display widths won't exceed u16::MAX"
 )]
 #[expect(clippy::too_many_lines, reason = "renderer — splitting would not improve clarity")]
-fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme, engine: &rhai::Engine) {
+fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme, engine: &rhai::Engine) -> usize {
     let all_visible = sheet.visible_columns();
     if all_visible.is_empty() {
-        return;
+        return sheet.top_row;
     }
     // Respect left_col scroll offset (GAP-010): slice off columns to the left.
     let left = sheet.left_col.min(all_visible.len().saturating_sub(1));
@@ -118,7 +140,6 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme, e
                 let max_data_w = sheet
                     .rows
                     .iter()
-                    .take(100)
                     .map(|row| {
                         let display = col.display_value(row);
                         cliptext::dispwidth(&display) as u16
@@ -134,16 +155,30 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme, e
 
     let widths: Vec<Constraint> = col_widths.iter().map(|&w| Constraint::Length(w)).collect();
 
-    // Header row — prepend `…` indicator for hidden columns (GAP-124)
+    // Build sort-key lookup: col_idx → direction indicator
+    let sort_indicator: std::collections::HashMap<usize, &'static str> = sheet.sort_keys
+        .iter()
+        .map(|sk| (sk.col_idx, match sk.direction {
+            SortDirection::Ascending  => "↑",
+            SortDirection::Descending => "↓",
+        }))
+        .collect();
+
+    // Header row — hidden-column indicator (GAP-124) + sort indicators
     let header_cells: Vec<Cell<'_>> = visible_cols
         .iter()
         .enumerate()
         .map(|(vi, col)| {
             let style = theme.header_style(col.is_key, vi + left == sheet.cursor_col);
+            // Find this col's position in sheet.columns for sort lookup
+            let col_idx = sheet.columns.iter().position(|c| c.id == col.id).unwrap_or(usize::MAX);
+            let sort_suffix = sort_indicator.get(&col_idx).copied().unwrap_or("");
             let label = if *has_hidden_before.get(vi).unwrap_or(&false) {
-                format!("…{}", col.name)
-            } else {
+                format!("…{}{sort_suffix}", col.name)
+            } else if sort_suffix.is_empty() {
                 col.name.clone()
+            } else {
+                format!("{}{sort_suffix}", col.name)
             };
             Cell::new(label).style(style)
         })
@@ -223,6 +258,8 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme, e
             &mut scrollbar_state,
         );
     }
+
+    top_row
 }
 
 /// Draw the status bar at the bottom of the screen.

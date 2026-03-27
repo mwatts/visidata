@@ -286,7 +286,7 @@ mod tests {
         assert_eq!(reloaded.num_rows(), 2);
         assert_eq!(reloaded.num_cols(), 2);
         assert_eq!(reloaded.get_cell(0, 0), Value::Text("Alice".into()));
-        assert_eq!(reloaded.get_cell(1, 1), Value::Text("25".into())); // CSV loads as text
+        assert_eq!(reloaded.get_cell(1, 1), Value::Int(25)); // age inferred as Int
 
         std::fs::remove_file(&path).ok();
     }

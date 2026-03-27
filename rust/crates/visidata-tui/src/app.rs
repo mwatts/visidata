@@ -438,7 +438,7 @@ impl App {
                 | InputMode::Help { .. } => None,
             };
 
-            renderer::draw_sheet(
+            let computed_top_row = renderer::draw_sheet(
                 frame,
                 area,
                 sheet,
@@ -447,6 +447,10 @@ impl App {
                 &self.theme,
                 self.script_engine.engine(),
             );
+            // Write computed top_row back so sheet state stays in sync (fix #7).
+            if let Some(s) = self.stack.active_mut() {
+                s.top_row = computed_top_row;
+            }
 
             // Render overlay modes on top of the sheet.
             if let InputMode::Help { scroll } = self.mode {
@@ -929,17 +933,18 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => sheet.cursor_up(1),
             KeyCode::Right | KeyCode::Char('l') => {
                 sheet.cursor_right(1);
-                // Scroll right if cursor moves past visible columns (GAP-010)
+                // Scroll right when cursor moves past the viewport edge (fix #5)
+                let term_w = crossterm::terminal::size().map_or(80, |(w, _)| w);
                 let vis_count = sheet.visible_columns().len();
-                let view_cols = 8usize; // conservative default; renderer uses actual widths
-                let view_right = sheet.left_col + view_cols.min(vis_count);
+                let viewport = renderer::cols_fitting_in_width(sheet, term_w);
+                let view_right = sheet.left_col + viewport;
                 if sheet.cursor_col >= view_right && sheet.left_col + 1 < vis_count {
                     sheet.left_col += 1;
                 }
             }
             KeyCode::Left | KeyCode::Char('h') => {
                 sheet.cursor_left(1);
-                // Scroll left if cursor moves before left_col (GAP-010)
+                // Scroll left when cursor moves before left_col (fix #5)
                 if sheet.cursor_col < sheet.left_col {
                     sheet.left_col = sheet.cursor_col;
                 }
@@ -3266,8 +3271,12 @@ impl App {
                 })
                 .unwrap_or_default();
 
+            // Show column name (fix #4), not just the column number
+            let col_name = sheet.current_column()
+                .map_or("", |c| c.name.as_str());
+
             self.status = format!(
-                "{}{mod_indicator}{load_text} | {}r x {}c | row {} col {} {type_indicator}{}{agg_text}",
+                "{}{mod_indicator}{load_text} | {}r x {}c | row {} col {} {col_name} {type_indicator}{}{agg_text}",
                 sheet.name,
                 sheet.num_rows(),
                 sheet.visible_columns().len(),
@@ -3488,20 +3497,14 @@ impl App {
 
     /// Jump to the previously active sheet (Ctrl+^).
     fn jump_prev_sheet(&mut self) {
-        if let Some(prev) = self.prev_sheet_idx {
-            let cur = self.stack.len().saturating_sub(1);
-            if prev != cur && prev < self.stack.len() {
-                // Swap top with prev by rotating
-                self.prev_sheet_idx = Some(cur);
-                // Navigate: pop to prev if prev == cur-1, else just set active
-                // Simple approach: move cursor within the stack via pop/push
-                // For now, pop until we reach prev+1 sheets
-                while self.stack.len() > prev + 1 {
-                    self.stack.pop();
-                }
-            } else {
-                self.status = "no previous sheet".into();
-            }
+        let cur = self.stack.len().saturating_sub(1);
+        if let Some(prev) = self.prev_sheet_idx
+            && prev != cur
+            && prev < self.stack.len()
+        {
+            // Swap the two sheets in-place — no sheets lost (fix #6)
+            self.stack.swap(cur, prev);
+            self.prev_sheet_idx = Some(cur); // the old "cur" is now at `prev` position
         } else {
             self.status = "no previous sheet".into();
         }

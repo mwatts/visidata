@@ -261,11 +261,10 @@ impl DrillAction for ExtDrill {
             };
             (None, name)
         };
-        let sql = if let Some(schema) = &schema {
-            format!("SELECT * FROM \"{schema}\".\"{name}\"")
-        } else {
-            format!("SELECT * FROM \"{name}\"")
-        };
+        let sql = schema.as_ref().map_or_else(
+            || format!("SELECT * FROM \"{name}\""),
+            |s| format!("SELECT * FROM \"{s}\".\"{name}\""),
+        );
         let options: HashMap<String, serde_json::Value> = self.options_snapshot
             .iter()
             .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
