@@ -272,6 +272,10 @@ pub fn builtin_commands() -> CommandRegistry {
     reg.add("gzt", "stoggle-after", "toggle selection of rows from cursor to end");
     reg.add("gzu", "unselect-after", "unselect rows from cursor to end");
 
+    // Null navigation (GAP-UX-17)
+    reg.add("z<", "go-prev-null", "go to previous null cell in current column");
+    reg.add("z>", "go-next-null", "go to next null cell in current column");
+
     // Search
     reg.add("/", "search-col", "search forward in current column");
     reg.add(
@@ -348,6 +352,13 @@ pub fn builtin_commands() -> CommandRegistry {
 
     // Expression columns
     reg.add("=", "expr-col", "add expression column");
+
+    // Dedupe / rank (GAP-UX-23, GAP-UX-24)
+    reg.add("z,", "select-duplicate-rows", "select rows with duplicate key column values");
+    reg.add("zR", "addcol-rank", "add rank column based on current column values");
+
+    // Status history sheet (GAP-UX-16)
+    reg.add("", "status-history-sheet", "show history of status messages (Ctrl+P)");
 
     // Save
     reg.add("", "save-sheet", "save sheet to source file (Ctrl+S)");

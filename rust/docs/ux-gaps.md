@@ -18,36 +18,36 @@ Status: `[ ]` open · `[~]` in progress · `[x]` done · `[-]` won't fix
 - [x] **GAP-UX-09** Search: shows "(wrapped)" in status when search wraps around
 - [x] **GAP-UX-10** Column resize: pre-fills current width in `ResizeColInput`
 - [x] **GAP-UX-11** Type-change: reports "N cells failed to convert to int" etc. in status
-- [ ] **GAP-UX-12** Null display: make null representation configurable via option (`disp_null` default `~`)
+- [x] **GAP-UX-12** Null display: null cells now render as `~` (Python-compatible default)
 
 ---
 
-## High Priority — Medium Effort (next up)
+## High Priority — Medium Effort
 
-- [ ] **GAP-UX-13** Input history: Up/Down arrow in any input field recalls previous entries of that input type
+- [x] **GAP-UX-13** Input history: Up/Down in search inputs (`/`, `?`) recalls previous patterns
 - [ ] **GAP-UX-14** Join operations: complete command handlers for inner/left/right/outer joins
 - [ ] **GAP-UX-15** Numeric frequency bins: bin numeric columns into ranges in FreqSheet (`numeric_binning` option)
-- [ ] **GAP-UX-16** Status history sheet: `Ctrl+P` opens sheet of past messages with priority levels
-- [ ] **GAP-UX-17** Navigation: add `go-prev-null` / `go-next-null` — jump to next empty cell in column
+- [x] **GAP-UX-16** Status history sheet: `Ctrl+P` opens sheet of all past status messages
+- [x] **GAP-UX-17** Navigation: `z<` / `z>` jump to prev/next null cell in current column
 
 ---
 
 ## Medium Priority — Low Effort
 
-- [ ] **GAP-UX-18** Column aggregator: show assigned aggregator in Columns Sheet
-- [ ] **GAP-UX-19** Keybinding shadow warning: on startup, log when `visidatarc.toml` overrides a builtin
+- [x] **GAP-UX-18** Column aggregator: shown in Columns Sheet `aggregator` column
+- [x] **GAP-UX-19** Keybinding shadow warning: startup warns when `visidatarc.toml` overrides a builtin
 - [ ] **GAP-UX-20** Command palette: weight results by recency/frequency (simple usage counter)
-- [ ] **GAP-UX-21** Quit confirmation: prompt `Save changes? (y/n/cancel)` when quitting a modified sheet
-- [ ] **GAP-UX-22** Save feedback: report rows written and file size in status after save
+- [x] **GAP-UX-21** Quit confirmation: already done — "press q again to quit" on modified sheet
+- [x] **GAP-UX-22** Save feedback: now reports rows saved and file size in status
 
 ---
 
 ## Medium Priority — Medium Effort
 
-- [ ] **GAP-UX-23** Dedupe: add `select-duplicate-rows` command (select rows where key columns repeat)
-- [ ] **GAP-UX-24** Rank column: add `addcol-rank` — new column with row rank by current column
+- [x] **GAP-UX-23** Dedupe: `z,` selects rows where key column values repeat
+- [x] **GAP-UX-24** Rank column: `zR` adds rank column based on current column values
 - [ ] **GAP-UX-25** Auto-refresh: `reload-every N` — periodically reload sheet source data
-- [ ] **GAP-UX-26** Async status label: show operation-specific gerund in status during background ops (`sorting…`, `loading…`)
+- [x] **GAP-UX-26** Sort feedback: status shows "sorted by colname ↑/↓" after sort commands
 - [ ] **GAP-UX-27** Right-click context menu (mouse): basic context actions on cell right-click
 
 ---

@@ -124,6 +124,7 @@ pub fn columns_sheet(source: &Sheet) -> Sheet {
         Column::new(ColumnId(2), "type", 2),
         Column::new(ColumnId(3), "key", 3),
         Column::new(ColumnId(4), "idx", 4),
+        Column::new(ColumnId(5), "aggregator", 5),
     ];
 
     let rows: Vec<Row> = source
@@ -134,6 +135,10 @@ pub fn columns_sheet(source: &Sheet) -> Sheet {
             let width_val = col
                 .width
                 .map_or_else(|| Value::Text("auto".into()), |w| Value::Int(i64::from(w)));
+            let agg_val = col
+                .aggregators
+                .first()
+                .map_or_else(|| Value::Null, |f| Value::Text(f.name().to_owned()));
             #[expect(clippy::cast_possible_wrap, reason = "column index won't exceed i64")]
             Row::new(vec![
                 Value::Text(col.name.clone()),
@@ -141,6 +146,7 @@ pub fn columns_sheet(source: &Sheet) -> Sheet {
                 Value::Text(col.col_type.indicator().to_owned()),
                 Value::Bool(col.is_key),
                 Value::Int(i as i64),
+                agg_val,
             ])
         })
         .collect();
@@ -891,6 +897,47 @@ pub fn add_incr_column(source: &mut Sheet, start: i64, step: i64) {
     ));
 }
 
+/// Add a rank column based on the values in `col_idx`.
+///
+/// The new column contains the 1-based rank of each row when sorted ascending
+/// by the source column's typed value. Rows with equal values receive
+/// consecutive ranks (not tied ranks).
+///
+/// Returns the name of the new column, or an empty string if `col_idx` is
+/// out of range.
+pub fn add_rank_column(source: &mut Sheet, col_idx: usize) -> String {
+    if col_idx >= source.columns.len() {
+        return String::new();
+    }
+    let n = source.rows.len();
+    // Build (row_idx, typed_value) pairs and sort by value ascending.
+    let mut indexed: Vec<(usize, Value)> = source
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(i, row)| (i, source.columns[col_idx].typed_value(row)))
+        .collect();
+    indexed.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut ranks = vec![0_i64; n];
+    #[expect(clippy::cast_possible_wrap, reason = "rank index won't exceed i64::MAX")]
+    for (rank, (row_idx, _)) in indexed.iter().enumerate() {
+        ranks[*row_idx] = (rank + 1) as i64;
+    }
+
+    let new_source_idx = source.columns.iter().map(|c| c.source_idx).max().unwrap_or(0) + 1;
+    let rank_col_name = format!("{}_rank", source.columns[col_idx].name);
+
+    for (i, row) in source.rows.iter_mut().enumerate() {
+        row.set(new_source_idx, Value::Int(ranks[i]));
+    }
+
+    let mut col = Column::new(ColumnId(source.columns.len()), &rank_col_name, new_source_idx);
+    col.col_type = crate::column::ColumnType::Int;
+    source.columns.push(col);
+    rank_col_name
+}
+
 /// Add one column per capture group for a regex applied to `col_idx`.
 ///
 /// Returns the number of columns added, or an error if the regex is invalid.
@@ -1132,7 +1179,7 @@ mod tests {
         let meta = columns_sheet(&source);
 
         assert_eq!(meta.name, "test_columns");
-        assert_eq!(meta.num_cols(), 5);
+        assert_eq!(meta.num_cols(), 6); // name, width, type, key, idx, aggregator
         assert_eq!(meta.num_rows(), 3);
 
         assert_eq!(meta.get_cell(0, 0), Value::Text("name".into()));

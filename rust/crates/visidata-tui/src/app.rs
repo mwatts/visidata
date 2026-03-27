@@ -207,6 +207,19 @@ pub struct App {
 
     /// Command log: (longname, key-string) pairs for Ctrl+D save.
     command_log: Vec<(String, String)>,
+
+    /// History of non-empty status messages, newest first (capped at 1 000).
+    status_history: std::collections::VecDeque<String>,
+
+    /// Per-input-type history of accepted strings, newest first (capped at 50 each).
+    input_history: std::collections::HashMap<String, std::collections::VecDeque<String>>,
+
+    /// Current history navigation position per input type.
+    /// 0 = at live text; N = history[N-1].
+    input_history_pos: std::collections::HashMap<String, usize>,
+
+    /// Saved live text before history navigation started, per input type.
+    input_history_live: std::collections::HashMap<String, String>,
 }
 
 impl App {
@@ -252,6 +265,10 @@ impl App {
             script_engine: ScriptEngine::new(),
             all_sheet_names: Vec::new(),
             command_log: Vec::new(),
+            status_history: std::collections::VecDeque::new(),
+            input_history: std::collections::HashMap::new(),
+            input_history_pos: std::collections::HashMap::new(),
+            input_history_live: std::collections::HashMap::new(),
         }
     }
 
@@ -278,7 +295,18 @@ impl App {
     fn event_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         self.update_status();
 
+        let mut last_pushed_status = String::new();
+
         while self.running {
+            // Track status messages for the history sheet (GAP-UX-16).
+            if !self.status.is_empty() && self.status != last_pushed_status {
+                self.status_history.push_front(self.status.clone());
+                if self.status_history.len() > 1_000 {
+                    self.status_history.pop_back();
+                }
+                last_pushed_status = self.status.clone();
+            }
+
             terminal.draw(|frame| self.draw(frame))?;
 
             // Replay macro keystrokes (drain one per iteration to keep UI responsive).
@@ -569,6 +597,12 @@ impl App {
             return;
         }
 
+        // Ctrl+P = status history sheet (GAP-UX-16)
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('p') {
+            self.dispatch_command("status-history-sheet");
+            return;
+        }
+
         // Ctrl+E = error sheet
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('e') {
             self.dispatch_command("error-recent");
@@ -855,6 +889,22 @@ impl App {
                 }
                 ("z", KeyCode::Char('x')) => {
                     self.dispatch_command("cut-cell");
+                    return;
+                }
+                ("z", KeyCode::Char('<')) => {
+                    self.dispatch_command("go-prev-null");
+                    return;
+                }
+                ("z", KeyCode::Char('>')) => {
+                    self.dispatch_command("go-next-null");
+                    return;
+                }
+                ("z", KeyCode::Char(',')) => {
+                    self.dispatch_command("select-duplicate-rows");
+                    return;
+                }
+                ("z", KeyCode::Char('R')) => {
+                    self.dispatch_command("addcol-rank");
                     return;
                 }
                 ("z", KeyCode::Char('H')) => {
@@ -1461,34 +1511,80 @@ impl App {
                     self.mode = InputMode::EditCell(editor);
                 }
             },
-            InputMode::SearchForward(mut editor) => match editor.handle_key(&key_str) {
-                EditResult::Accept(pattern) => {
-                    self.last_search = Some(pattern.clone());
-                    self.last_search_forward = true;
-                    self.execute_search(&pattern, true);
-                    self.mode = InputMode::Normal;
+            InputMode::SearchForward(mut editor) => {
+                const HKEY: &str = "search";
+                match key_str.as_str() {
+                    "Up" => {
+                        if let Some(t) = history_prev(&self.input_history, &mut self.input_history_pos, &mut self.input_history_live, HKEY, &editor.text()) {
+                            editor = LineEditor::new(&t);
+                        }
+                        self.mode = InputMode::SearchForward(editor);
+                        return;
+                    }
+                    "Down" => {
+                        if let Some(t) = history_next(&mut self.input_history_pos, &self.input_history_live, &self.input_history, HKEY) {
+                            editor = LineEditor::new(&t);
+                        }
+                        self.mode = InputMode::SearchForward(editor);
+                        return;
+                    }
+                    _ => {}
                 }
-                EditResult::Cancel => {
-                    self.mode = InputMode::Normal;
+                match editor.handle_key(&key_str) {
+                    EditResult::Accept(pattern) => {
+                        push_input_history(&mut self.input_history, HKEY, pattern.clone());
+                        reset_history_nav(&mut self.input_history_pos, &mut self.input_history_live, HKEY);
+                        self.last_search = Some(pattern.clone());
+                        self.last_search_forward = true;
+                        self.execute_search(&pattern, true);
+                        self.mode = InputMode::Normal;
+                    }
+                    EditResult::Cancel => {
+                        reset_history_nav(&mut self.input_history_pos, &mut self.input_history_live, HKEY);
+                        self.mode = InputMode::Normal;
+                    }
+                    EditResult::Continue => {
+                        self.mode = InputMode::SearchForward(editor);
+                    }
                 }
-                EditResult::Continue => {
-                    self.mode = InputMode::SearchForward(editor);
+            }
+            InputMode::SearchBackward(mut editor) => {
+                const HKEY: &str = "search";
+                match key_str.as_str() {
+                    "Up" => {
+                        if let Some(t) = history_prev(&self.input_history, &mut self.input_history_pos, &mut self.input_history_live, HKEY, &editor.text()) {
+                            editor = LineEditor::new(&t);
+                        }
+                        self.mode = InputMode::SearchBackward(editor);
+                        return;
+                    }
+                    "Down" => {
+                        if let Some(t) = history_next(&mut self.input_history_pos, &self.input_history_live, &self.input_history, HKEY) {
+                            editor = LineEditor::new(&t);
+                        }
+                        self.mode = InputMode::SearchBackward(editor);
+                        return;
+                    }
+                    _ => {}
                 }
-            },
-            InputMode::SearchBackward(mut editor) => match editor.handle_key(&key_str) {
-                EditResult::Accept(pattern) => {
-                    self.last_search = Some(pattern.clone());
-                    self.last_search_forward = false;
-                    self.execute_search(&pattern, false);
-                    self.mode = InputMode::Normal;
+                match editor.handle_key(&key_str) {
+                    EditResult::Accept(pattern) => {
+                        push_input_history(&mut self.input_history, HKEY, pattern.clone());
+                        reset_history_nav(&mut self.input_history_pos, &mut self.input_history_live, HKEY);
+                        self.last_search = Some(pattern.clone());
+                        self.last_search_forward = false;
+                        self.execute_search(&pattern, false);
+                        self.mode = InputMode::Normal;
+                    }
+                    EditResult::Cancel => {
+                        reset_history_nav(&mut self.input_history_pos, &mut self.input_history_live, HKEY);
+                        self.mode = InputMode::Normal;
+                    }
+                    EditResult::Continue => {
+                        self.mode = InputMode::SearchBackward(editor);
+                    }
                 }
-                EditResult::Cancel => {
-                    self.mode = InputMode::Normal;
-                }
-                EditResult::Continue => {
-                    self.mode = InputMode::SearchBackward(editor);
-                }
-            },
+            }
             InputMode::SearchForwardAllCols(mut editor) => {
                 match editor.handle_key(&key_str) {
                     EditResult::Accept(pattern) => {
@@ -2102,14 +2198,18 @@ impl App {
                 if let Some(s) = self.stack.active_mut()
                     && let Some(idx) = resolve_cursor_col_idx(s)
                 {
+                    let col_name = s.columns[idx].name.clone();
                     s.sort_by(idx, SortDirection::Ascending);
+                    self.status = format!("sorted by {col_name} ↑");
                 }
             }
             "sort-desc" => {
                 if let Some(s) = self.stack.active_mut()
                     && let Some(idx) = resolve_cursor_col_idx(s)
                 {
+                    let col_name = s.columns[idx].name.clone();
                     s.sort_by(idx, SortDirection::Descending);
+                    self.status = format!("sorted by {col_name} ↓");
                 }
             }
             "select-row" => {
@@ -2341,6 +2441,46 @@ impl App {
                     }
                 }
             }
+            // --- Null navigation (GAP-UX-17) ---
+            "go-prev-null" => {
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    let start = s.cursor_row;
+                    let mut found = false;
+                    for i in (0..start).rev() {
+                        if s.columns[col_idx].typed_value(&s.rows[i]).is_null() {
+                            s.cursor_row = i;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found {
+                        self.status = "no null cells above".into();
+                    }
+                }
+            }
+            "go-next-null" => {
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    let start = s.cursor_row + 1;
+                    let mut found = false;
+                    for i in start..s.rows.len() {
+                        if s.columns[col_idx].typed_value(&s.rows[i]).is_null() {
+                            s.cursor_row = i;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found {
+                        self.status = "no null cells below".into();
+                    }
+                }
+            }
+
             "scroll-middle" => {
                 if let Some(s) = self.stack.active_mut() {
                     let height = crossterm::terminal::size().map_or(20, |(_, h)| h as usize);
@@ -2526,14 +2666,18 @@ impl App {
                 if let Some(s) = self.stack.active_mut()
                     && let Some(idx) = resolve_cursor_col_idx(s)
                 {
+                    let col_name = s.columns[idx].name.clone();
                     s.sort_by_add(idx, SortDirection::Ascending);
+                    self.status = format!("added sort key: {col_name} ↑ (key {})", s.sort_keys.len());
                 }
             }
             "sort-desc-add" => {
                 if let Some(s) = self.stack.active_mut()
                     && let Some(idx) = resolve_cursor_col_idx(s)
                 {
+                    let col_name = s.columns[idx].name.clone();
                     s.sort_by_add(idx, SortDirection::Descending);
+                    self.status = format!("added sort key: {col_name} ↓ (key {})", s.sort_keys.len());
                 }
             }
 
@@ -2786,6 +2930,68 @@ impl App {
             "addcol-incr" => {
                 if let Some(s) = self.stack.active_mut() {
                     visidata_core::sheets::add_incr_column(s, 1, 1);
+                    self.status = "added incremental column".into();
+                }
+            }
+
+            // --- Add rank column (GAP-UX-24) ---
+            "addcol-rank" => {
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    let col_name = visidata_core::sheets::add_rank_column(s, col_idx);
+                    if col_name.is_empty() {
+                        self.status = "no column to rank".into();
+                    } else {
+                        self.status = format!("added rank column: {col_name}");
+                    }
+                }
+            }
+
+            // --- Select duplicate rows (GAP-UX-23) ---
+            "select-duplicate-rows" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let key_cols: Vec<usize> = s.columns.iter().enumerate()
+                        .filter(|(_, c)| c.is_key)
+                        .map(|(i, _)| i)
+                        .collect();
+                    if key_cols.is_empty() {
+                        self.status = "no key columns — set key columns with !".into();
+                    } else {
+                        let mut counts: std::collections::HashMap<Vec<String>, usize> =
+                            std::collections::HashMap::new();
+                        for row in &s.rows {
+                            let key: Vec<String> = key_cols.iter()
+                                .map(|&ci| s.columns[ci].display_value(row))
+                                .collect();
+                            *counts.entry(key).or_insert(0) += 1;
+                        }
+                        let mut n = 0usize;
+                        for row in &mut s.rows {
+                            let key: Vec<String> = key_cols.iter()
+                                .map(|&ci| s.columns[ci].display_value(row))
+                                .collect();
+                            if counts.get(&key).copied().unwrap_or(0) > 1 {
+                                row.selected = true;
+                                n += 1;
+                            }
+                        }
+                        self.status = format!("selected {n} duplicate rows");
+                    }
+                }
+            }
+
+            // --- Status history sheet (GAP-UX-16) ---
+            "status-history-sheet" => {
+                let col = visidata_core::Column::new(visidata_core::ColumnId(0), "message", 0);
+                let rows: Vec<visidata_core::Row> = self.status_history.iter()
+                    .map(|msg| visidata_core::Row::new(vec![visidata_core::Value::Text(msg.clone())]))
+                    .collect();
+                if rows.is_empty() {
+                    self.status = "no status history yet".into();
+                } else {
+                    let sheet = visidata_core::Sheet::with_data("status_history".to_owned(), vec![col], rows);
+                    self.stack.push(sheet);
                 }
             }
             // --- Frequency for all key cols ---
@@ -3774,9 +3980,15 @@ impl App {
             self.status = "no source file to save to".into();
             return;
         };
+        let row_count = sheet.num_rows();
         match visidata_loaders::save_sheet(sheet, &path) {
             Ok(()) => {
-                self.status = format!("saved to {}", path.display());
+                let file_size = std::fs::metadata(&path)
+                    .map_or(0, |m| m.len());
+                self.status = format!(
+                    "saved {row_count} rows to {} ({file_size} bytes)",
+                    path.display()
+                );
                 // Mark as no longer modified
                 if let Some(sheet) = self.stack.active_mut() {
                     sheet.modified = false;
@@ -3788,6 +4000,81 @@ impl App {
             }
         }
     }
+}
+
+/// Push a value to the input history for a given type key.
+fn push_input_history(
+    history: &mut std::collections::HashMap<String, std::collections::VecDeque<String>>,
+    key: &str,
+    value: String,
+) {
+    if value.is_empty() {
+        return;
+    }
+    let entries = history.entry(key.to_owned()).or_default();
+    // Avoid consecutive duplicates.
+    if entries.front().is_some_and(|e| e == &value) {
+        return;
+    }
+    entries.push_front(value);
+    if entries.len() > 50 {
+        entries.pop_back();
+    }
+}
+
+/// Navigate history upward (older) for an input field.
+///
+/// Returns the text to load into the editor, or `None` if already at oldest.
+fn history_prev(
+    history: &std::collections::HashMap<String, std::collections::VecDeque<String>>,
+    pos_map: &mut std::collections::HashMap<String, usize>,
+    live_map: &mut std::collections::HashMap<String, String>,
+    key: &str,
+    current_text: &str,
+) -> Option<String> {
+    let entries = history.get(key)?;
+    let pos = pos_map.entry(key.to_owned()).or_insert(0);
+    if *pos == 0 {
+        // Save live text before starting navigation.
+        live_map.insert(key.to_owned(), current_text.to_owned());
+    }
+    if *pos < entries.len() {
+        *pos += 1;
+        Some(entries[*pos - 1].clone())
+    } else {
+        None
+    }
+}
+
+/// Navigate history downward (newer) for an input field.
+///
+/// Returns the text to load, or `None` if already at live text.
+fn history_next(
+    pos_map: &mut std::collections::HashMap<String, usize>,
+    live_map: &std::collections::HashMap<String, String>,
+    history: &std::collections::HashMap<String, std::collections::VecDeque<String>>,
+    key: &str,
+) -> Option<String> {
+    let pos = pos_map.entry(key.to_owned()).or_insert(0);
+    if *pos == 0 {
+        return None;
+    }
+    *pos -= 1;
+    if *pos == 0 {
+        Some(live_map.get(key).cloned().unwrap_or_default())
+    } else {
+        history.get(key).and_then(|e| e.get(*pos - 1).cloned())
+    }
+}
+
+/// Reset history navigation state for a key.
+fn reset_history_nav(
+    pos_map: &mut std::collections::HashMap<String, usize>,
+    live_map: &mut std::collections::HashMap<String, String>,
+    key: &str,
+) {
+    pos_map.remove(key);
+    live_map.remove(key);
 }
 
 /// Auto-fit the current column width based on data.

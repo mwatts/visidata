@@ -73,8 +73,17 @@ fn main() -> Result<()> {
 
     let mut app = App::new_with_options(sheet, initial_options);
 
-    // Apply pre-loaded keybinding overrides
+    // Apply pre-loaded keybinding overrides.
+    // Warn when a user binding shadows a different built-in (GAP-UX-19).
     for (keystroke, longname) in initial_keybindings {
+        if let Some(existing) = app.commands.lookup_by_keystroke(&keystroke) {
+            if existing != longname {
+                eprintln!(
+                    "vd: keybinding {keystroke:?} overrides built-in {:?} → {longname:?}",
+                    existing
+                );
+            }
+        }
         app.commands.add(&keystroke, &longname, "user-defined");
     }
 

@@ -205,6 +205,10 @@ impl Column {
     #[must_use]
     pub fn display_value(&self, row: &Row) -> String {
         let typed = self.typed_value(row);
+        // Null values display as "~" to match Python VisiData behaviour.
+        if typed.is_null() {
+            return "~".to_owned();
+        }
         if let Some(ref fmt) = self.fmt {
             match &typed {
                 Value::Float(f) => return apply_float_fmt(fmt, *f),
@@ -525,7 +529,8 @@ mod tests {
     fn display_value_null() {
         let row = Row::new(vec![Value::Null]);
         let col = Column::new(ColumnId(0), "x", 0);
-        assert_eq!(col.display_value(&row), "");
+        // Null renders as "~" to match Python VisiData.
+        assert_eq!(col.display_value(&row), "~");
     }
 
     #[test]
