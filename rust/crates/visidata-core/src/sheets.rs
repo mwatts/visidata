@@ -294,6 +294,356 @@ pub fn sheets_sheet(sheets: &[&Sheet]) -> Sheet {
     Sheet::with_data("sheets", columns, rows)
 }
 
+// --- Join ---
+
+/// Join type for multi-sheet joins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JoinType {
+    Inner,
+    Outer,
+    Left,
+    Right,
+}
+
+/// Join two sheets by their key columns.
+///
+/// Key columns are identified by `is_key == true`. Both sheets must have at least
+/// one key column. The join key is the concatenated display values of all key columns.
+#[must_use]
+pub fn join_sheets(left: &Sheet, right: &Sheet, join_type: JoinType) -> Sheet {
+    let left_keys = key_column_indices(left);
+    let right_keys = key_column_indices(right);
+
+    // Build key → row indices maps.
+    let left_map = build_key_map(left, &left_keys);
+    let right_map = build_key_map(right, &right_keys);
+
+    // Build output columns: left non-key cols + right non-key cols, prefixed.
+    let left_non_key: Vec<usize> = (0..left.columns.len())
+        .filter(|i| !left.columns[*i].is_key)
+        .collect();
+    let right_non_key: Vec<usize> = (0..right.columns.len())
+        .filter(|i| !right.columns[*i].is_key)
+        .collect();
+
+    let mut out_cols: Vec<Column> = Vec::new();
+    let mut col_id = 0;
+
+    // Key columns from left
+    for &ki in &left_keys {
+        let mut col = Column::new(ColumnId(col_id), &left.columns[ki].name, col_id);
+        col.is_key = true;
+        out_cols.push(col);
+        col_id += 1;
+    }
+    // Non-key columns from left
+    for &ci in &left_non_key {
+        out_cols.push(Column::new(
+            ColumnId(col_id),
+            format!("{}.{}", left.name, left.columns[ci].name),
+            col_id,
+        ));
+        col_id += 1;
+    }
+    // Non-key columns from right
+    for &ci in &right_non_key {
+        out_cols.push(Column::new(
+            ColumnId(col_id),
+            format!("{}.{}", right.name, right.columns[ci].name),
+            col_id,
+        ));
+        col_id += 1;
+    }
+
+    let mut out_rows: Vec<Row> = Vec::new();
+    let null_left = vec![Value::Null; left_non_key.len()];
+    let null_right = vec![Value::Null; right_non_key.len()];
+
+    // Collect all keys in order.
+    let mut all_keys: Vec<String> = Vec::new();
+    match join_type {
+        JoinType::Inner => {
+            for key in left_map.keys() {
+                if right_map.contains_key(key) {
+                    all_keys.push(key.clone());
+                }
+            }
+        }
+        JoinType::Left => {
+            all_keys.extend(left_map.keys().cloned());
+        }
+        JoinType::Right => {
+            all_keys.extend(right_map.keys().cloned());
+        }
+        JoinType::Outer => {
+            all_keys.extend(left_map.keys().cloned());
+            for key in right_map.keys() {
+                if !left_map.contains_key(key) {
+                    all_keys.push(key.clone());
+                }
+            }
+        }
+    }
+
+    for key in &all_keys {
+        let left_rows = left_map.get(key);
+        let right_rows = right_map.get(key);
+
+        let left_data: Vec<Vec<Value>> = left_rows.map_or_else(
+            || vec![null_left.clone()],
+            |indices| {
+                indices
+                    .iter()
+                    .map(|&ri| {
+                        left_non_key
+                            .iter()
+                            .map(|&ci| left.rows[ri].get(left.columns[ci].source_idx).clone())
+                            .collect()
+                    })
+                    .collect()
+            },
+        );
+
+        let right_data: Vec<Vec<Value>> = right_rows.map_or_else(
+            || vec![null_right.clone()],
+            |indices| {
+                indices
+                    .iter()
+                    .map(|&ri| {
+                        right_non_key
+                            .iter()
+                            .map(|&ci| right.rows[ri].get(right.columns[ci].source_idx).clone())
+                            .collect()
+                    })
+                    .collect()
+            },
+        );
+
+        // Key values from whichever side has data.
+        #[expect(clippy::option_if_let_else, reason = "three-way branch is clearer")]
+        let key_vals: Vec<Value> = if let Some(indices) = left_rows {
+            left_keys
+                .iter()
+                .map(|&ki| {
+                    left.rows[indices[0]]
+                        .get(left.columns[ki].source_idx)
+                        .clone()
+                })
+                .collect()
+        } else if let Some(indices) = right_rows {
+            right_keys
+                .iter()
+                .map(|&ki| {
+                    right.rows[indices[0]]
+                        .get(right.columns[ki].source_idx)
+                        .clone()
+                })
+                .collect()
+        } else {
+            vec![Value::Null; left_keys.len()]
+        };
+
+        // Cross product of left × right rows.
+        for lv in &left_data {
+            for rv in &right_data {
+                let mut values = key_vals.clone();
+                values.extend(lv.iter().cloned());
+                values.extend(rv.iter().cloned());
+                out_rows.push(Row::new(values));
+            }
+        }
+    }
+
+    Sheet::with_data(format!("{}&{}", left.name, right.name), out_cols, out_rows)
+}
+
+/// Concatenate multiple sheets vertically.
+///
+/// Columns are merged by name; missing values become `Null`.
+#[must_use]
+pub fn concat_sheets(sheets: &[&Sheet]) -> Sheet {
+    if sheets.is_empty() {
+        return Sheet::new("concat");
+    }
+
+    // Collect all unique column names in order of first appearance.
+    let mut col_names: Vec<String> = Vec::new();
+    for sheet in sheets {
+        for col in &sheet.columns {
+            if !col_names.contains(&col.name) {
+                col_names.push(col.name.clone());
+            }
+        }
+    }
+
+    let columns: Vec<Column> = col_names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| Column::new(ColumnId(i), name.as_str(), i))
+        .collect();
+
+    let mut rows: Vec<Row> = Vec::new();
+    for sheet in sheets {
+        // Build name → source_idx mapping for this sheet.
+        let name_to_idx: HashMap<&str, usize> = sheet
+            .columns
+            .iter()
+            .map(|c| (c.name.as_str(), c.source_idx))
+            .collect();
+
+        for row in &sheet.rows {
+            let values: Vec<Value> = col_names
+                .iter()
+                .map(|name| {
+                    name_to_idx
+                        .get(name.as_str())
+                        .map_or(Value::Null, |&idx| row.get(idx).clone())
+                })
+                .collect();
+            rows.push(Row::new(values));
+        }
+    }
+
+    Sheet::with_data("concat", columns, rows)
+}
+
+/// Pivot a sheet: key columns become row identifiers, a value column
+/// provides the aggregated values, grouped by a pivot column.
+#[must_use]
+pub fn pivot_sheet(source: &Sheet, pivot_col_idx: usize) -> Sheet {
+    let key_indices: Vec<usize> = key_column_indices(source);
+    let Some(pivot_col) = source.columns.get(pivot_col_idx) else {
+        return Sheet::new(format!("{}_pivot", source.name));
+    };
+
+    // Collect distinct pivot values.
+    let mut pivot_values: Vec<String> = Vec::new();
+    for row in &source.rows {
+        let val = pivot_col.display_value(row);
+        if !pivot_values.contains(&val) {
+            pivot_values.push(val);
+        }
+    }
+
+    // Build columns: key columns + one column per pivot value (count).
+    let mut out_cols: Vec<Column> = Vec::new();
+    let mut col_id = 0;
+    for &ki in &key_indices {
+        let mut col = Column::new(ColumnId(col_id), &source.columns[ki].name, col_id);
+        col.is_key = true;
+        out_cols.push(col);
+        col_id += 1;
+    }
+    for pv in &pivot_values {
+        out_cols.push(Column::new(ColumnId(col_id), pv.as_str(), col_id));
+        col_id += 1;
+    }
+
+    // Group rows by key.
+    let mut groups: HashMap<String, HashMap<String, i64>> = HashMap::new();
+    let mut key_rows: HashMap<String, Vec<Value>> = HashMap::new();
+
+    for row in &source.rows {
+        let key = make_row_key(source, row, &key_indices);
+        let pval = pivot_col.display_value(row);
+        *groups
+            .entry(key.clone())
+            .or_default()
+            .entry(pval)
+            .or_insert(0) += 1;
+        key_rows.entry(key).or_insert_with(|| {
+            key_indices
+                .iter()
+                .map(|&ki| row.get(source.columns[ki].source_idx).clone())
+                .collect()
+        });
+    }
+
+    let mut out_rows: Vec<Row> = Vec::new();
+    for (key, counts) in &groups {
+        let mut values = key_rows[key].clone();
+        for pv in &pivot_values {
+            values.push(Value::Int(*counts.get(pv).unwrap_or(&0)));
+        }
+        out_rows.push(Row::new(values));
+    }
+
+    Sheet::with_data(format!("{}_pivot", source.name), out_cols, out_rows)
+}
+
+/// Melt (unpivot) a sheet: convert wide format to long format.
+///
+/// Key columns stay as-is; non-key columns become (variable, value) rows.
+#[must_use]
+pub fn melt_sheet(source: &Sheet) -> Sheet {
+    let key_indices: Vec<usize> = key_column_indices(source);
+    let value_indices: Vec<usize> = (0..source.columns.len())
+        .filter(|i| !source.columns[*i].is_key)
+        .collect();
+
+    // Build output columns: key cols + "variable" + "value".
+    let mut out_cols: Vec<Column> = Vec::new();
+    let mut col_id = 0;
+    for &ki in &key_indices {
+        let mut col = Column::new(ColumnId(col_id), &source.columns[ki].name, col_id);
+        col.is_key = true;
+        out_cols.push(col);
+        col_id += 1;
+    }
+    out_cols.push(Column::new(ColumnId(col_id), "variable", col_id));
+    col_id += 1;
+    out_cols.push(Column::new(ColumnId(col_id), "value", col_id));
+
+    let mut out_rows: Vec<Row> = Vec::new();
+    for row in &source.rows {
+        let key_vals: Vec<Value> = key_indices
+            .iter()
+            .map(|&ki| row.get(source.columns[ki].source_idx).clone())
+            .collect();
+
+        for &vi in &value_indices {
+            let mut values = key_vals.clone();
+            values.push(Value::Text(source.columns[vi].name.clone()));
+            values.push(row.get(source.columns[vi].source_idx).clone());
+            out_rows.push(Row::new(values));
+        }
+    }
+
+    Sheet::with_data(format!("{}_melt", source.name), out_cols, out_rows)
+}
+
+// --- Helpers ---
+
+fn key_column_indices(sheet: &Sheet) -> Vec<usize> {
+    sheet
+        .columns
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.is_key)
+        .map(|(i, _)| i)
+        .collect()
+}
+
+fn build_key_map(sheet: &Sheet, key_indices: &[usize]) -> HashMap<String, Vec<usize>> {
+    let mut map: HashMap<String, Vec<usize>> = HashMap::new();
+    for (row_idx, row) in sheet.rows.iter().enumerate() {
+        let key = make_row_key(sheet, row, key_indices);
+        map.entry(key).or_default().push(row_idx);
+    }
+    map
+}
+
+fn make_row_key(sheet: &Sheet, row: &Row, key_indices: &[usize]) -> String {
+    key_indices
+        .iter()
+        .map(|&ki| {
+            let col = &sheet.columns[ki];
+            col.display_value(row)
+        })
+        .collect::<Vec<_>>()
+        .join("\x00")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -515,5 +865,180 @@ mod tests {
     fn sheets_sheet_empty() {
         let index = sheets_sheet(&[]);
         assert_eq!(index.num_rows(), 0);
+    }
+
+    // --- Join tests ---
+
+    fn join_left_sheet() -> Sheet {
+        let mut columns = vec![
+            Column::new(ColumnId(0), "id", 0),
+            Column::new(ColumnId(1), "name", 1),
+        ];
+        columns[0].is_key = true;
+        let rows = vec![
+            Row::new(vec![Value::Int(1), Value::Text("Alice".into())]),
+            Row::new(vec![Value::Int(2), Value::Text("Bob".into())]),
+            Row::new(vec![Value::Int(3), Value::Text("Carol".into())]),
+        ];
+        let mut s = Sheet::with_data("left", columns, rows);
+        s.num_keys = 1;
+        s
+    }
+
+    fn join_right_sheet() -> Sheet {
+        let mut columns = vec![
+            Column::new(ColumnId(0), "id", 0),
+            Column::new(ColumnId(1), "score", 1),
+        ];
+        columns[0].is_key = true;
+        let rows = vec![
+            Row::new(vec![Value::Int(1), Value::Float(90.0)]),
+            Row::new(vec![Value::Int(3), Value::Float(75.0)]),
+            Row::new(vec![Value::Int(4), Value::Float(88.0)]),
+        ];
+        let mut s = Sheet::with_data("right", columns, rows);
+        s.num_keys = 1;
+        s
+    }
+
+    #[test]
+    fn join_inner() {
+        let left = join_left_sheet();
+        let right = join_right_sheet();
+        let result = join_sheets(&left, &right, JoinType::Inner);
+
+        assert_eq!(result.num_rows(), 2); // id 1, 3
+        assert_eq!(result.num_cols(), 3); // id, left.name, right.score
+    }
+
+    #[test]
+    fn join_left() {
+        let left = join_left_sheet();
+        let right = join_right_sheet();
+        let result = join_sheets(&left, &right, JoinType::Left);
+
+        assert_eq!(result.num_rows(), 3); // all left rows
+    }
+
+    #[test]
+    fn join_outer() {
+        let left = join_left_sheet();
+        let right = join_right_sheet();
+        let result = join_sheets(&left, &right, JoinType::Outer);
+
+        assert_eq!(result.num_rows(), 4); // 1, 2, 3, 4
+    }
+
+    // --- Concat tests ---
+
+    #[test]
+    fn concat_two_sheets() {
+        let s1 = Sheet::with_data(
+            "a",
+            vec![
+                Column::new(ColumnId(0), "x", 0),
+                Column::new(ColumnId(1), "y", 1),
+            ],
+            vec![Row::new(vec![Value::Int(1), Value::Int(2)])],
+        );
+        let s2 = Sheet::with_data(
+            "b",
+            vec![
+                Column::new(ColumnId(0), "x", 0),
+                Column::new(ColumnId(1), "z", 1),
+            ],
+            vec![Row::new(vec![Value::Int(3), Value::Int(4)])],
+        );
+
+        let result = concat_sheets(&[&s1, &s2]);
+        assert_eq!(result.num_rows(), 2);
+        assert_eq!(result.num_cols(), 3); // x, y, z
+
+        // First row from s1: x=1, y=2, z=null
+        assert_eq!(result.get_cell(0, 0), Value::Int(1));
+        assert_eq!(result.get_cell(0, 1), Value::Int(2));
+        assert_eq!(result.get_cell(0, 2), Value::Null);
+
+        // Second row from s2: x=3, y=null, z=4
+        assert_eq!(result.get_cell(1, 0), Value::Int(3));
+        assert_eq!(result.get_cell(1, 1), Value::Null);
+        assert_eq!(result.get_cell(1, 2), Value::Int(4));
+    }
+
+    #[test]
+    fn concat_empty() {
+        let result = concat_sheets(&[]);
+        assert_eq!(result.num_rows(), 0);
+        assert_eq!(result.num_cols(), 0);
+    }
+
+    // --- Pivot tests ---
+
+    #[test]
+    fn pivot_basic() {
+        let mut columns = vec![
+            Column::new(ColumnId(0), "region", 0),
+            Column::new(ColumnId(1), "product", 1),
+        ];
+        columns[0].is_key = true;
+        let rows = vec![
+            Row::new(vec![
+                Value::Text("East".into()),
+                Value::Text("Widget".into()),
+            ]),
+            Row::new(vec![
+                Value::Text("East".into()),
+                Value::Text("Gadget".into()),
+            ]),
+            Row::new(vec![
+                Value::Text("West".into()),
+                Value::Text("Widget".into()),
+            ]),
+            Row::new(vec![
+                Value::Text("East".into()),
+                Value::Text("Widget".into()),
+            ]),
+        ];
+        let mut source = Sheet::with_data("sales", columns, rows);
+        source.num_keys = 1;
+
+        let pivoted = pivot_sheet(&source, 1);
+        assert_eq!(pivoted.num_cols(), 3); // region, Widget, Gadget
+        assert_eq!(pivoted.num_rows(), 2); // East, West
+    }
+
+    // --- Melt tests ---
+
+    #[test]
+    fn melt_basic() {
+        let mut columns = vec![
+            Column::new(ColumnId(0), "name", 0),
+            Column::new(ColumnId(1), "q1", 1),
+            Column::new(ColumnId(2), "q2", 2),
+        ];
+        columns[0].is_key = true;
+        let rows = vec![
+            Row::new(vec![
+                Value::Text("Alice".into()),
+                Value::Int(10),
+                Value::Int(20),
+            ]),
+            Row::new(vec![
+                Value::Text("Bob".into()),
+                Value::Int(30),
+                Value::Int(40),
+            ]),
+        ];
+        let mut source = Sheet::with_data("data", columns, rows);
+        source.num_keys = 1;
+
+        let melted = melt_sheet(&source);
+        assert_eq!(melted.num_cols(), 3); // name, variable, value
+        assert_eq!(melted.num_rows(), 4); // 2 rows × 2 value columns
+
+        // First row: Alice, q1, 10
+        assert_eq!(melted.get_cell(0, 0), Value::Text("Alice".into()));
+        assert_eq!(melted.get_cell(0, 1), Value::Text("q1".into()));
+        assert_eq!(melted.get_cell(0, 2), Value::Int(10));
     }
 }

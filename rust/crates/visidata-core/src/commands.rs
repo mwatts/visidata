@@ -234,6 +234,20 @@ pub fn builtin_commands() -> CommandRegistry {
     reg.add("S", "sheets-sheet", "show all open sheets");
     reg.add("O", "options-sheet", "show all options");
 
+    // Multi-sheet operations
+    reg.add(
+        "&",
+        "join-sheets",
+        "join current sheet with previous by key columns",
+    );
+    reg.add(
+        "",
+        "concat-sheets",
+        "concatenate selected sheets vertically",
+    );
+    reg.add("W", "pivot", "pivot table by current column");
+    reg.add("M", "melt", "unpivot non-key columns to rows");
+
     // Editing
     reg.add("e", "edit-cell", "edit current cell");
     reg.add("a", "add-row", "insert empty row above cursor");

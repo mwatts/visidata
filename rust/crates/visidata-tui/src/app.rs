@@ -360,6 +360,22 @@ impl App {
                 }
             }
 
+            // --- Multi-sheet operations ---
+            KeyCode::Char('&') => {
+                self.join_top_two_sheets();
+            }
+            KeyCode::Char('W') => {
+                let col_idx = resolve_cursor_col_idx(sheet);
+                if let Some(idx) = col_idx {
+                    let pivoted = visidata_core::sheets::pivot_sheet(sheet, idx);
+                    self.stack.push(pivoted);
+                }
+            }
+            KeyCode::Char('M') => {
+                let melted = visidata_core::sheets::melt_sheet(sheet);
+                self.stack.push(melted);
+            }
+
             // --- Frequency table ---
             KeyCode::Char('F') => {
                 let col_idx = resolve_cursor_col_idx(sheet);
@@ -676,6 +692,28 @@ impl App {
                 }
             }
             "save-sheet" => self.save_current_sheet(),
+            "join-sheets" => self.join_top_two_sheets(),
+            "concat-sheets" => {
+                let sheets: Vec<&Sheet> = self.stack.iter().collect();
+                if sheets.len() >= 2 {
+                    let concatenated = visidata_core::sheets::concat_sheets(&sheets);
+                    self.stack.push(concatenated);
+                }
+            }
+            "pivot" => {
+                if let Some(s) = self.stack.active()
+                    && let Some(idx) = resolve_cursor_col_idx(s)
+                {
+                    let pivoted = visidata_core::sheets::pivot_sheet(s, idx);
+                    self.stack.push(pivoted);
+                }
+            }
+            "melt" => {
+                if let Some(s) = self.stack.active() {
+                    let melted = visidata_core::sheets::melt_sheet(s);
+                    self.stack.push(melted);
+                }
+            }
             _ => {
                 self.status = format!("unknown command: {longname}");
             }
@@ -744,6 +782,20 @@ impl App {
                 sel_text,
             );
         }
+    }
+
+    /// Join the top two sheets on the stack by key columns (inner join).
+    fn join_top_two_sheets(&mut self) {
+        let sheets: Vec<&Sheet> = self.stack.iter().collect();
+        if sheets.len() < 2 {
+            self.status = "need at least 2 sheets to join".into();
+            return;
+        }
+        let right = sheets[0]; // active (top)
+        let left = sheets[1]; // previous
+        let joined =
+            visidata_core::sheets::join_sheets(left, right, visidata_core::sheets::JoinType::Inner);
+        self.stack.push(joined);
     }
 
     /// Save the current sheet to its source file.
