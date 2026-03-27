@@ -10,5 +10,6 @@ workspace = true
 [dependencies]
 visidata-ext-protocol = { workspace = true }
 duckdb = { workspace = true }
+arrow = { workspace = true, features = ["ipc"] }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

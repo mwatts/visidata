@@ -1,8 +1,9 @@
 //! `vd_duckdb` — `DuckDB` external loader for `vd`.
 //!
 //! Implements the Arrow IPC subprocess protocol defined in `docs/ext-loaders.md`.
-//! Uses NDJSON transport because `DuckDB` bundles its own Arrow version which
-//! is not type-compatible with the host's `arrow` crate at the Rust level.
+//! Uses Arrow IPC transport — `DuckDB`'s `query_arrow()` produces `RecordBatch`
+//! values that are type-compatible with the host because both depend on
+//! `arrow = "58"`.
 //!
 //! ## Usage
 //!
@@ -17,16 +18,17 @@
 //! echo '{"path":"/data/sales.duckdb","query":"SELECT * FROM orders","options":{}}' | vd_duckdb
 //! ```
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead};
 
 use anyhow::{Context, Result};
+use arrow::ipc::writer::StreamWriter;
 use visidata_ext_protocol::{ExtManifest, LoadRequest, Transport};
 
 /// SQL run when `query` is null — return a table/view index.
 const TABLE_INDEX_SQL: &str = "\
     SELECT \
-        table_name  AS name, \
-        table_type  AS type \
+        table_name AS name, \
+        table_type AS type \
     FROM information_schema.tables \
     WHERE table_schema = 'main' \
     ORDER BY table_type, table_name";
@@ -51,15 +53,16 @@ fn print_manifest() -> Result<()> {
         version: env!("CARGO_PKG_VERSION").into(),
         extensions: vec!["duckdb".into(), "ddb".into()],
         schemes: vec!["duckdb://".into()],
-        transport: Transport::Ndjson,
+        transport: Transport::ArrowIpc,
     };
-    let json = serde_json::to_string(&manifest).context("failed to serialise manifest")?;
-    println!("{json}");
+    println!(
+        "{}",
+        serde_json::to_string(&manifest).context("failed to serialise manifest")?
+    );
     Ok(())
 }
 
 fn run_load() -> Result<()> {
-    // Read the single JSON request line from stdin.
     let mut line = String::new();
     io::stdin()
         .lock()
@@ -69,7 +72,6 @@ fn run_load() -> Result<()> {
     let req: LoadRequest =
         serde_json::from_str(line.trim()).context("failed to parse LoadRequest")?;
 
-    // Open DuckDB in read-only mode.
     let conn = duckdb::Connection::open_with_flags(
         &req.path,
         duckdb::Config::default()
@@ -84,45 +86,24 @@ fn run_load() -> Result<()> {
         .prepare(sql)
         .with_context(|| format!("failed to prepare: {sql}"))?;
 
-    // Execute as rows and write NDJSON to stdout.
+    // `query_arrow` returns `arrow 58` RecordBatch — same type the host uses.
+    let arrow_stream = stmt
+        .query_arrow([])
+        .context("failed to execute Arrow query")?;
+
+    let schema = arrow_stream.get_schema();
     let stdout = io::stdout();
-    let mut out = io::BufWriter::new(stdout.lock());
+    let mut writer = StreamWriter::try_new(stdout.lock(), &schema)
+        .context("failed to create Arrow IPC stream writer")?;
 
-    // Collect column names before mutably borrowing via query().
-    let col_names: Vec<String> = stmt.column_names();
-
-    let mut rows = stmt.query([]).context("failed to execute query")?;
-
-    while let Some(row) = rows.next().context("error reading DuckDB row")? {
-        let mut obj = serde_json::Map::with_capacity(col_names.len());
-        for (i, name) in col_names.iter().enumerate() {
-            let val = duckdb_value(row, i);
-            obj.insert(name.clone(), val);
-        }
-        let line = serde_json::to_string(&serde_json::Value::Object(obj))
-            .context("failed to serialise row")?;
-        writeln!(out, "{line}").context("failed to write NDJSON row")?;
+    for batch in arrow_stream {
+        writer
+            .write(&batch)
+            .context("failed to write Arrow batch")?;
     }
 
-    out.flush().context("failed to flush output")?;
+    writer
+        .finish()
+        .context("failed to finalise Arrow IPC stream")?;
     Ok(())
-}
-
-/// Extract a value from a `DuckDB` row at column index `i` as a JSON value.
-fn duckdb_value(row: &duckdb::Row<'_>, i: usize) -> serde_json::Value {
-    // Try types in priority order: int → float → bool → text → null.
-    if let Ok(v) = row.get::<_, i64>(i) {
-        return serde_json::Value::Number(v.into());
-    }
-    if let Ok(v) = row.get::<_, f64>(i) {
-        return serde_json::Number::from_f64(v)
-            .map_or(serde_json::Value::Null, serde_json::Value::Number);
-    }
-    if let Ok(v) = row.get::<_, bool>(i) {
-        return serde_json::Value::Bool(v);
-    }
-    if let Ok(v) = row.get::<_, String>(i) {
-        return serde_json::Value::String(v);
-    }
-    serde_json::Value::Null
 }
