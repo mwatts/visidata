@@ -313,137 +313,99 @@ pub enum JoinType {
 pub fn join_sheets(left: &Sheet, right: &Sheet, join_type: JoinType) -> Sheet {
     let left_keys = key_column_indices(left);
     let right_keys = key_column_indices(right);
-
-    // Build key → row indices maps.
     let left_map = build_key_map(left, &left_keys);
     let right_map = build_key_map(right, &right_keys);
+    let left_non_key: Vec<usize> = non_key_indices(left);
+    let right_non_key: Vec<usize> = non_key_indices(right);
+    let out_cols = build_join_columns(left, right, &left_keys, &left_non_key, &right_non_key);
+    let all_keys = collect_join_keys(&left_map, &right_map, join_type);
+    let out_rows = build_join_rows(
+        left, right,
+        &left_keys, &right_keys,
+        &left_non_key, &right_non_key,
+        &left_map, &right_map,
+        &all_keys,
+    );
+    Sheet::with_data(format!("{}&{}", left.name, right.name), out_cols, out_rows)
+}
 
-    // Build output columns: left non-key cols + right non-key cols, prefixed.
-    let left_non_key: Vec<usize> = (0..left.columns.len())
-        .filter(|i| !left.columns[*i].is_key)
-        .collect();
-    let right_non_key: Vec<usize> = (0..right.columns.len())
-        .filter(|i| !right.columns[*i].is_key)
-        .collect();
+fn non_key_indices(sheet: &Sheet) -> Vec<usize> {
+    (0..sheet.columns.len())
+        .filter(|&i| !sheet.columns[i].is_key)
+        .collect()
+}
 
-    let mut out_cols: Vec<Column> = Vec::new();
+fn build_join_columns(
+    left: &Sheet,
+    right: &Sheet,
+    left_keys: &[usize],
+    left_non_key: &[usize],
+    right_non_key: &[usize],
+) -> Vec<Column> {
+    let mut out_cols = Vec::new();
     let mut col_id = 0;
-
-    // Key columns from left
-    for &ki in &left_keys {
+    for &ki in left_keys {
         let mut col = Column::new(ColumnId(col_id), &left.columns[ki].name, col_id);
         col.is_key = true;
         out_cols.push(col);
         col_id += 1;
     }
-    // Non-key columns from left
-    for &ci in &left_non_key {
-        out_cols.push(Column::new(
-            ColumnId(col_id),
-            format!("{}.{}", left.name, left.columns[ci].name),
-            col_id,
-        ));
+    for &ci in left_non_key {
+        out_cols.push(Column::new(ColumnId(col_id), format!("{}.{}", left.name, left.columns[ci].name), col_id));
         col_id += 1;
     }
-    // Non-key columns from right
-    for &ci in &right_non_key {
-        out_cols.push(Column::new(
-            ColumnId(col_id),
-            format!("{}.{}", right.name, right.columns[ci].name),
-            col_id,
-        ));
+    for &ci in right_non_key {
+        out_cols.push(Column::new(ColumnId(col_id), format!("{}.{}", right.name, right.columns[ci].name), col_id));
         col_id += 1;
     }
+    out_cols
+}
 
-    let mut out_rows: Vec<Row> = Vec::new();
+fn collect_join_keys(
+    left_map: &std::collections::HashMap<String, Vec<usize>>,
+    right_map: &std::collections::HashMap<String, Vec<usize>>,
+    join_type: JoinType,
+) -> Vec<String> {
+    match join_type {
+        JoinType::Inner => left_map.keys().filter(|k| right_map.contains_key(*k)).cloned().collect(),
+        JoinType::Left => left_map.keys().cloned().collect(),
+        JoinType::Right => right_map.keys().cloned().collect(),
+        JoinType::Outer => {
+            let mut keys: Vec<String> = left_map.keys().cloned().collect();
+            keys.extend(right_map.keys().filter(|k| !left_map.contains_key(*k)).cloned());
+            keys
+        }
+    }
+}
+
+#[expect(clippy::too_many_arguments, reason = "join is inherently multi-parameter")]
+fn build_join_rows(
+    left: &Sheet, right: &Sheet,
+    left_keys: &[usize], right_keys: &[usize],
+    left_non_key: &[usize], right_non_key: &[usize],
+    left_map: &std::collections::HashMap<String, Vec<usize>>,
+    right_map: &std::collections::HashMap<String, Vec<usize>>,
+    all_keys: &[String],
+) -> Vec<Row> {
     let null_left = vec![Value::Null; left_non_key.len()];
     let null_right = vec![Value::Null; right_non_key.len()];
+    let mut out_rows = Vec::new();
 
-    // Collect all keys in order.
-    let mut all_keys: Vec<String> = Vec::new();
-    match join_type {
-        JoinType::Inner => {
-            for key in left_map.keys() {
-                if right_map.contains_key(key) {
-                    all_keys.push(key.clone());
-                }
-            }
-        }
-        JoinType::Left => {
-            all_keys.extend(left_map.keys().cloned());
-        }
-        JoinType::Right => {
-            all_keys.extend(right_map.keys().cloned());
-        }
-        JoinType::Outer => {
-            all_keys.extend(left_map.keys().cloned());
-            for key in right_map.keys() {
-                if !left_map.contains_key(key) {
-                    all_keys.push(key.clone());
-                }
-            }
-        }
-    }
-
-    for key in &all_keys {
+    for key in all_keys {
         let left_rows = left_map.get(key);
         let right_rows = right_map.get(key);
+        let left_data = extract_non_key_data(left, left_rows, left_non_key, &null_left);
+        let right_data = extract_non_key_data(right, right_rows, right_non_key, &null_right);
 
-        let left_data: Vec<Vec<Value>> = left_rows.map_or_else(
-            || vec![null_left.clone()],
-            |indices| {
-                indices
-                    .iter()
-                    .map(|&ri| {
-                        left_non_key
-                            .iter()
-                            .map(|&ci| left.rows[ri].get(left.columns[ci].source_idx).clone())
-                            .collect()
-                    })
-                    .collect()
-            },
-        );
-
-        let right_data: Vec<Vec<Value>> = right_rows.map_or_else(
-            || vec![null_right.clone()],
-            |indices| {
-                indices
-                    .iter()
-                    .map(|&ri| {
-                        right_non_key
-                            .iter()
-                            .map(|&ci| right.rows[ri].get(right.columns[ci].source_idx).clone())
-                            .collect()
-                    })
-                    .collect()
-            },
-        );
-
-        // Key values from whichever side has data.
         #[expect(clippy::option_if_let_else, reason = "three-way branch is clearer")]
         let key_vals: Vec<Value> = if let Some(indices) = left_rows {
-            left_keys
-                .iter()
-                .map(|&ki| {
-                    left.rows[indices[0]]
-                        .get(left.columns[ki].source_idx)
-                        .clone()
-                })
-                .collect()
+            left_keys.iter().map(|&ki| left.rows[indices[0]].get(left.columns[ki].source_idx).clone()).collect()
         } else if let Some(indices) = right_rows {
-            right_keys
-                .iter()
-                .map(|&ki| {
-                    right.rows[indices[0]]
-                        .get(right.columns[ki].source_idx)
-                        .clone()
-                })
-                .collect()
+            right_keys.iter().map(|&ki| right.rows[indices[0]].get(right.columns[ki].source_idx).clone()).collect()
         } else {
             vec![Value::Null; left_keys.len()]
         };
 
-        // Cross product of left × right rows.
         for lv in &left_data {
             for rv in &right_data {
                 let mut values = key_vals.clone();
@@ -453,8 +415,23 @@ pub fn join_sheets(left: &Sheet, right: &Sheet, join_type: JoinType) -> Sheet {
             }
         }
     }
+    out_rows
+}
 
-    Sheet::with_data(format!("{}&{}", left.name, right.name), out_cols, out_rows)
+fn extract_non_key_data(
+    sheet: &Sheet,
+    indices: Option<&Vec<usize>>,
+    non_key: &[usize],
+    null_row: &[Value],
+) -> Vec<Vec<Value>> {
+    indices.map_or_else(
+        || vec![null_row.to_vec()],
+        |idxs| {
+            idxs.iter()
+                .map(|&ri| non_key.iter().map(|&ci| sheet.rows[ri].get(sheet.columns[ci].source_idx).clone()).collect())
+                .collect()
+        },
+    )
 }
 
 /// Concatenate multiple sheets vertically.

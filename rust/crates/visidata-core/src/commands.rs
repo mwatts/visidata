@@ -177,6 +177,7 @@ pub enum KeystrokeOutcome {
 
 /// Build a registry with all built-in `VisiData` commands.
 #[must_use]
+#[expect(clippy::too_many_lines, reason = "flat command registration table")]
 pub fn builtin_commands() -> CommandRegistry {
     let mut reg = CommandRegistry::new();
 
@@ -188,6 +189,11 @@ pub fn builtin_commands() -> CommandRegistry {
     reg.add("gj", "go-bottom", "move cursor to last row");
     reg.add("gk", "go-top", "move cursor to first row");
     reg.add("g", "go-top", "move cursor to first row");
+    reg.add("<", "go-prev-value", "go to previous row with different value in current column");
+    reg.add(">", "go-next-value", "go to next row with different value in current column");
+    reg.add("{", "go-prev-selected", "go to previous selected row");
+    reg.add("}", "go-next-selected", "go to next selected row");
+    reg.add("zz", "scroll-middle", "scroll current row to middle of screen");
 
     // Sheet
     reg.add("q", "quit-sheet", "quit current sheet");
@@ -195,9 +201,19 @@ pub fn builtin_commands() -> CommandRegistry {
 
     // Column operations
     reg.add("_", "resize-col-max", "auto-fit column width");
+    reg.add("g_", "resize-cols-max", "auto-fit all visible columns");
     reg.add("-", "hide-col", "hide current column");
+    reg.add("gv", "unhide-cols", "unhide all hidden columns");
     reg.add("^", "rename-col", "rename current column");
     reg.add("!", "key-col", "toggle key column");
+    reg.add("H", "slide-left", "move current column one position left");
+    reg.add("L", "slide-right", "move current column one position right");
+    reg.add("gH", "slide-leftmost", "move current column to leftmost position");
+    reg.add("gL", "slide-rightmost", "move current column to rightmost position");
+    reg.add("J", "slide-row-down", "move current row one position down");
+    reg.add("K", "slide-row-up", "move current row one position up");
+    reg.add("gJ", "slide-row-bottom", "move current row to last position");
+    reg.add("gK", "slide-row-top", "move current row to first position");
 
     // Type conversion
     reg.add("#", "type-int", "set column type to int");
@@ -209,11 +225,24 @@ pub fn builtin_commands() -> CommandRegistry {
     // Sorting
     reg.add("[", "sort-asc", "sort ascending by current column");
     reg.add("]", "sort-desc", "sort descending by current column");
+    reg.add("g[", "sort-keys-asc", "sort ascending by all key columns");
+    reg.add("g]", "sort-keys-desc", "sort descending by all key columns");
+    reg.add("z[", "sort-asc-add", "add current column to ascending sort");
+    reg.add("z]", "sort-desc-add", "add current column to descending sort");
 
     // Selection
     reg.add("s", "select-row", "select current row");
     reg.add("u", "unselect-row", "unselect current row");
     reg.add("t", "toggle-row", "toggle selection on current row");
+    reg.add("gs", "select-rows", "select all rows");
+    reg.add("gu", "unselect-rows", "unselect all rows");
+    reg.add("gt", "stoggle-rows", "toggle selection on all rows");
+    reg.add("|", "select-col-regex", "select rows matching regex in current column");
+    reg.add("\\", "unselect-col-regex", "unselect rows matching regex in current column");
+    reg.add("g|", "select-cols-regex", "select rows matching regex in any visible column");
+    reg.add("g\\", "unselect-cols-regex", "unselect rows matching regex in any visible column");
+    reg.add(",", "select-equal-cell", "select rows equal to current cell value");
+    reg.add("g,", "select-equal-row", "select rows equal to entire current row");
 
     // Search
     reg.add("/", "search-col", "search forward in current column");
@@ -224,9 +253,15 @@ pub fn builtin_commands() -> CommandRegistry {
     );
     reg.add("n", "search-next", "repeat search forward");
     reg.add("N", "search-prev", "repeat search backward");
+    reg.add("r", "search-keys", "search forward in key columns");
+    reg.add("g/", "search-cols", "search forward in all visible columns");
+    reg.add("g?", "searchr-cols", "search backward in all visible columns");
 
     // Filter / Frequency
     reg.add("\"", "dup-selected", "push sheet of selected rows");
+    reg.add("g\"", "dup-rows", "push sheet of all rows");
+    reg.add("z\"", "dup-selected-deep", "push deep copy of selected rows");
+    reg.add("gz\"", "dup-rows-deep", "push deep copy of all rows");
     reg.add("F", "freq-col", "frequency table for current column");
 
     // Sheet types
@@ -252,17 +287,24 @@ pub fn builtin_commands() -> CommandRegistry {
     // Editing
     reg.add("e", "edit-cell", "edit current cell");
     reg.add("a", "add-row", "insert empty row above cursor");
+    reg.add("A", "open-new", "open a new empty sheet");
     reg.add("d", "delete-row", "delete current row");
     reg.add("gd", "delete-selected", "delete all selected rows");
+    reg.add("zd", "delete-cell", "set current cell to null");
+    reg.add("gzd", "delete-cells", "set selected rows' current column to null");
+    reg.add("f", "fill-down", "fill null cells downward with last non-null value");
 
-    // Undo
+    // Undo / Redo
     reg.add("", "undo", "undo last edit (Ctrl+Z)");
+    reg.add("R", "redo", "redo last undone edit");
 
     // Clipboard
     reg.add("y", "yank-cell", "yank (copy) current cell");
     reg.add("p", "paste-cell", "paste cell value");
     reg.add("gy", "yank-row", "yank (copy) current row");
-    reg.add("gp", "paste-row", "paste row(s) after cursor");
+    reg.add("gp", "paste-after", "paste row(s) after cursor");
+    reg.add("x", "cut-row", "cut current row (yank and delete)");
+    reg.add("gx", "cut-selected", "cut selected rows (yank and delete)");
 
     // Aggregation
     reg.add("+", "aggregate-col", "show aggregation for current column");
@@ -275,6 +317,10 @@ pub fn builtin_commands() -> CommandRegistry {
 
     // Help
     reg.add("", "help-commands", "show all commands");
+
+    // TUI
+    reg.add("", "redraw", "force full terminal redraw (Ctrl+L)");
+    reg.add("", "reload-sheet", "reload sheet from source file (Ctrl+R)");
 
     // Macros
     reg.add("Q", "macro-record-toggle", "start/stop macro recording");

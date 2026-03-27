@@ -331,6 +331,65 @@ impl Sheet {
         }
     }
 
+    /// Toggle selection on every row.
+    pub fn toggle_select_all(&mut self) {
+        for row in &mut self.rows {
+            row.selected = !row.selected;
+        }
+    }
+
+    /// Select or unselect rows where `col_idx` display value matches `pattern`.
+    ///
+    /// Returns the number of rows affected, or `None` if the regex is invalid.
+    pub fn select_by_col_regex(
+        &mut self,
+        col_idx: usize,
+        pattern: &str,
+        select: bool,
+    ) -> Option<usize> {
+        let re = regex::Regex::new(pattern).ok()?;
+        let mut count = 0;
+        for row in &mut self.rows {
+            if let Some(col) = self.columns.get(col_idx) {
+                let display = col.display_value(row);
+                if re.is_match(&display) {
+                    row.selected = select;
+                    count += 1;
+                }
+            }
+        }
+        Some(count)
+    }
+
+    /// Select or unselect rows where any visible column matches `pattern`.
+    pub fn select_by_any_col_regex(
+        &mut self,
+        pattern: &str,
+        select: bool,
+    ) -> Option<usize> {
+        let re = regex::Regex::new(pattern).ok()?;
+        let col_indices: Vec<usize> = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| !c.is_hidden())
+            .map(|(i, _)| i)
+            .collect();
+        let mut count = 0;
+        for row in &mut self.rows {
+            let matches = col_indices.iter().any(|&ci| {
+                self.columns
+                    .get(ci)
+                    .is_some_and(|col| re.is_match(&col.display_value(row)))
+            });
+            if matches {
+                row.selected = select;
+                count += 1;
+            }
+        }
+        Some(count)
+    }
+
     /// Returns the selected rows as a new filtered sheet.
     #[must_use]
     pub fn selected_rows_sheet(&self) -> Self {
@@ -339,6 +398,18 @@ impl Sheet {
             format!("{}_selected", self.name),
             self.columns.clone(),
             selected_rows,
+        );
+        sheet.source.clone_from(&self.source);
+        sheet
+    }
+
+    /// Create a sheet containing all rows (a full copy).
+    #[must_use]
+    pub fn all_rows_sheet(&self) -> Self {
+        let mut sheet = Self::with_data(
+            format!("{}_copy", self.name),
+            self.columns.clone(),
+            self.rows.clone(),
         );
         sheet.source.clone_from(&self.source);
         sheet
@@ -380,6 +451,79 @@ impl Sheet {
             }
         }
         None
+    }
+
+    /// Search forward across all visible columns for a regex match.
+    ///
+    /// Returns the row index of the first match, or `None`.
+    #[must_use]
+    pub fn search_forward_all_cols(&self, pattern: &str) -> Option<usize> {
+        let re = regex::Regex::new(pattern).ok()?;
+        let col_indices: Vec<usize> = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| !c.is_hidden())
+            .map(|(i, _)| i)
+            .collect();
+        let start = self.cursor_row + 1;
+        for i in (start..self.rows.len()).chain(0..start) {
+            for &ci in &col_indices {
+                if self
+                    .columns
+                    .get(ci)
+                    .is_some_and(|col| re.is_match(&col.display_value(&self.rows[i])))
+                {
+                    return Some(i);
+                }
+            }
+        }
+        None
+    }
+
+    /// Search backward across all visible columns for a regex match.
+    #[must_use]
+    pub fn search_backward_all_cols(&self, pattern: &str) -> Option<usize> {
+        let re = regex::Regex::new(pattern).ok()?;
+        let col_indices: Vec<usize> = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| !c.is_hidden())
+            .map(|(i, _)| i)
+            .collect();
+        let start = self.cursor_row;
+        for i in (0..start).rev().chain((start..self.rows.len()).rev()) {
+            for &ci in &col_indices {
+                if self
+                    .columns
+                    .get(ci)
+                    .is_some_and(|col| re.is_match(&col.display_value(&self.rows[i])))
+                {
+                    return Some(i);
+                }
+            }
+        }
+        None
+    }
+
+    /// Sort by all key columns in the given direction.
+    pub fn sort_by_keys(&mut self, direction: SortDirection) {
+        let key_indices: Vec<usize> = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.is_key)
+            .map(|(i, _)| i)
+            .collect();
+        if key_indices.is_empty() {
+            return;
+        }
+        self.sort_keys = key_indices
+            .into_iter()
+            .map(|col_idx| SortKey { col_idx, direction })
+            .collect();
+        self.apply_sort();
     }
 
     // --- Frequency ---
@@ -435,6 +579,51 @@ impl Sheet {
             col_source_idx,
             old_value,
         });
+    }
+
+    /// Fill null cells downward in `col_source_idx` using the last non-null value.
+    ///
+    /// Records a `BulkSetCell` undo action.
+    pub fn fill_down(&mut self, col_source_idx: usize) {
+        let mut last_val: Option<Value> = None;
+        let mut changes: Vec<(usize, usize, Value)> = Vec::new();
+
+        for row_idx in 0..self.rows.len() {
+            let current = self.rows[row_idx].get(col_source_idx).clone();
+            if !matches!(current, Value::Null) {
+                last_val = Some(current);
+            } else if let Some(ref fill) = last_val {
+                changes.push((row_idx, col_source_idx, current));
+                self.rows[row_idx].set(col_source_idx, fill.clone());
+            }
+        }
+
+        if !changes.is_empty() {
+            self.modified = true;
+            self.undo_stack
+                .push(UndoAction::BulkSetCell { changes });
+        }
+    }
+
+    /// Rename a column and record it as an undoable action.
+    pub fn rename_column(&mut self, col_id: usize, new_name: String) {
+        if let Some(col) = self.columns.iter_mut().find(|c| c.id.0 == col_id) {
+            let old_name = std::mem::replace(&mut col.name, new_name);
+            self.modified = true;
+            self.undo_stack
+                .push(UndoAction::RenameColumn { col_id, old_name });
+        }
+    }
+
+    /// Set a column's type and record it as an undoable action.
+    pub fn set_col_type(&mut self, col_id: usize, new_type: crate::column::ColumnType) {
+        if let Some(col) = self.columns.iter_mut().find(|c| c.id.0 == col_id) {
+            let old_type = col.col_type;
+            col.col_type = new_type;
+            self.modified = true;
+            self.undo_stack
+                .push(UndoAction::SetColType { col_id, old_type });
+        }
     }
 
     /// Insert an empty row at the given index and record it for undo.
@@ -508,6 +697,13 @@ impl Sheet {
                     row.set(col_source_idx, old_value);
                 }
             }
+            UndoAction::BulkSetCell { changes } => {
+                for (row_idx, col_source_idx, old_value) in changes {
+                    if let Some(row) = self.rows.get_mut(row_idx) {
+                        row.set(col_source_idx, old_value);
+                    }
+                }
+            }
             UndoAction::InsertRow { row_idx } => {
                 if row_idx < self.rows.len() {
                     self.rows.remove(row_idx);
@@ -522,6 +718,16 @@ impl Sheet {
                 for (idx, row) in entries.into_iter().rev() {
                     let insert_at = idx.min(self.rows.len());
                     self.rows.insert(insert_at, row);
+                }
+            }
+            UndoAction::RenameColumn { col_id, old_name } => {
+                if let Some(col) = self.columns.iter_mut().find(|c| c.id.0 == col_id) {
+                    col.name = old_name;
+                }
+            }
+            UndoAction::SetColType { col_id, old_type } => {
+                if let Some(col) = self.columns.iter_mut().find(|c| c.id.0 == col_id) {
+                    col.col_type = old_type;
                 }
             }
         }

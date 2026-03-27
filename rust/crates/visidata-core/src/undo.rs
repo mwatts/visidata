@@ -1,5 +1,6 @@
 //! Undo/redo system for sheet mutations.
 
+use crate::column::ColumnType;
 use crate::row::Row;
 use crate::value::Value;
 
@@ -12,12 +13,18 @@ pub enum UndoAction {
         col_source_idx: usize,
         old_value: Value,
     },
+    /// Multiple cells were changed in bulk (e.g. fill-down, delete-cells).
+    BulkSetCell { changes: Vec<(usize, usize, Value)> },
     /// A row was inserted at the given index.
     InsertRow { row_idx: usize },
     /// A row was deleted from the given index (stores the removed row).
     DeleteRow { row_idx: usize, row: Row },
     /// Multiple rows were deleted (stores them in reverse index order).
     DeleteRows { entries: Vec<(usize, Row)> },
+    /// A column was renamed.
+    RenameColumn { col_id: usize, old_name: String },
+    /// A column's type was changed.
+    SetColType { col_id: usize, old_type: ColumnType },
 }
 
 /// Stack of undo actions for a sheet.

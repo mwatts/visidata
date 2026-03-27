@@ -87,115 +87,40 @@ fn demo_sheet() -> Sheet {
         Column::new(ColumnId(3), "Salary", 3),
         Column::new(ColumnId(4), "Active", 4),
     ];
-
-    let data: Vec<Vec<Value>> = vec![
-        vec![
-            "Alice".into(),
-            30_i64.into(),
-            "New York".into(),
-            Value::Float(85000.0),
-            true.into(),
-        ],
-        vec![
-            "Bob".into(),
-            25_i64.into(),
-            "San Francisco".into(),
-            Value::Float(92000.0),
-            true.into(),
-        ],
-        vec![
-            "Carol".into(),
-            35_i64.into(),
-            "Chicago".into(),
-            Value::Float(78000.0),
-            false.into(),
-        ],
-        vec![
-            "Dave".into(),
-            28_i64.into(),
-            "Boston".into(),
-            Value::Float(71000.0),
-            true.into(),
-        ],
-        vec![
-            "Eve".into(),
-            42_i64.into(),
-            "Seattle".into(),
-            Value::Float(105_000.0),
-            true.into(),
-        ],
-        vec![
-            "Frank".into(),
-            31_i64.into(),
-            "Austin".into(),
-            Value::Float(68000.0),
-            false.into(),
-        ],
-        vec![
-            "Grace".into(),
-            29_i64.into(),
-            "Denver".into(),
-            Value::Float(73000.0),
-            true.into(),
-        ],
-        vec![
-            "Hank".into(),
-            38_i64.into(),
-            "Portland".into(),
-            Value::Float(88000.0),
-            true.into(),
-        ],
-        vec![
-            "Ivy".into(),
-            26_i64.into(),
-            "Miami".into(),
-            Value::Float(65000.0),
-            false.into(),
-        ],
-        vec![
-            "Jack".into(),
-            45_i64.into(),
-            "Atlanta".into(),
-            Value::Float(110_000.0),
-            true.into(),
-        ],
-        vec![
-            "Karen".into(),
-            33_i64.into(),
-            "Minneapolis".into(),
-            Value::Float(79000.0),
-            true.into(),
-        ],
-        vec![
-            "Leo".into(),
-            27_i64.into(),
-            "Nashville".into(),
-            Value::Float(62000.0),
-            false.into(),
-        ],
-        vec![
-            "Mona".into(),
-            39_i64.into(),
-            "Phoenix".into(),
-            Value::Float(95000.0),
-            true.into(),
-        ],
-        vec![
-            "Nick".into(),
-            24_i64.into(),
-            "Detroit".into(),
-            Value::Float(58000.0),
-            true.into(),
-        ],
-        vec![
-            "Olivia".into(),
-            36_i64.into(),
-            "San Diego".into(),
-            Value::Float(87000.0),
-            false.into(),
-        ],
-    ];
-
-    let rows: Vec<Row> = data.into_iter().map(Row::new).collect();
+    let rows = demo_rows();
     Sheet::with_data("demo", columns, rows)
+}
+
+/// Raw data rows for the demo sheet.
+fn demo_rows() -> Vec<Row> {
+    // (name, age, city, salary, active)
+    let records: &[(&str, i64, &str, f64, bool)] = &[
+        ("Alice",  30, "New York",      85_000.0, true),
+        ("Bob",    25, "San Francisco", 92_000.0, true),
+        ("Carol",  35, "Chicago",       78_000.0, false),
+        ("Dave",   28, "Boston",        71_000.0, true),
+        ("Eve",    42, "Seattle",      105_000.0, true),
+        ("Frank",  31, "Austin",        68_000.0, false),
+        ("Grace",  29, "Denver",        73_000.0, true),
+        ("Hank",   38, "Portland",      88_000.0, true),
+        ("Ivy",    26, "Miami",         65_000.0, false),
+        ("Jack",   45, "Atlanta",      110_000.0, true),
+        ("Karen",  33, "Minneapolis",   79_000.0, true),
+        ("Leo",    27, "Nashville",     62_000.0, false),
+        ("Mona",   39, "Phoenix",       95_000.0, true),
+        ("Nick",   24, "Detroit",       58_000.0, true),
+        ("Olivia", 36, "San Diego",     87_000.0, false),
+    ];
+    records
+        .iter()
+        .map(|&(name, age, city, salary, active)| {
+            Row::new(vec![
+                name.into(),
+                age.into(),
+                city.into(),
+                Value::Float(salary),
+                active.into(),
+            ])
+        })
+        .collect()
 }

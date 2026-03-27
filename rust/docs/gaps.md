@@ -14,28 +14,28 @@ Each entry has:
 
 ### GAP-001 — Go to previous different value (`<`)
 **Python**: `movement.py` — `go-prev-value` moves the cursor up to the nearest row where the current column's value differs from the cursor row.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: In `dispatch_command`, add `"go-prev-value"`. Starting from `cursor_row - 1`, walk rows upward comparing `col.display_value(row)` against the value at the original cursor row. Stop at first difference. Bind `<` in `handle_normal_key` and register in `builtin_commands`.
 
 ---
 
 ### GAP-002 — Go to next different value (`>`)
 **Python**: `movement.py` — `go-next-value`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Same as GAP-001 but walk downward from `cursor_row + 1`. Bind `>`.
 
 ---
 
 ### GAP-003 — Go to previous selected row (`{`)
 **Python**: `movement.py` — `go-prev-selected`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Walk rows upward from `cursor_row - 1`; stop at first row where `row.selected == true`. Bind `{` in `handle_normal_key`.
 
 ---
 
 ### GAP-004 — Go to next selected row (`}`)
 **Python**: `movement.py` — `go-next-selected`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Walk downward from `cursor_row + 1`. Bind `}`.
 
 ---
@@ -49,7 +49,7 @@ Each entry has:
 
 ### GAP-006 — Scroll current row to centre (`zz`)
 **Python**: `movement.py` — `scroll-middle` sets `top_row` so cursor is in the vertical middle of the visible area.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: In `dispatch_command("scroll-middle")`, compute `top_row = cursor_row.saturating_sub(height / 2)`. Bind `zz` (requires z-prefix support in `handle_normal_key`).
 
 ---
@@ -102,63 +102,63 @@ Each entry has:
 
 ### GAP-013 — Select all rows (`gs`)
 **Python**: `selection.py` — `select-rows` marks every row selected.
-**Rust now**: Missing. Only per-row `s` exists.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Add `sheet.select_all()` method to `Sheet`. In `dispatch_command("select-rows")`, call it. In `handle_normal_key` under g-prefix handler, add `Char('s') => self.dispatch_command("select-rows")`. Register `"gs"` in `builtin_commands`.
 
 ---
 
 ### GAP-014 — Unselect all rows (`gu`)
 **Python**: `selection.py` — `unselect-rows`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Add `sheet.unselect_all()`. Bind `gu`.
 
 ---
 
 ### GAP-015 — Toggle selection of all rows (`gt`)
 **Python**: `selection.py` — `stoggle-rows`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Add `sheet.toggle_select_all()` — flip `.selected` on every row. Bind `gt`.
 
 ---
 
 ### GAP-016 — Select rows matching regex in current column (`|`)
 **Python**: `selection.py` — `select-col-regex` prompts for a regex, selects all rows where the current column matches.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Add `InputMode::SelectRegex(LineEditor)`. On Accept, compile regex (use `regex` crate already in workspace), iterate rows, test `col.display_value(row)` against regex, set `row.selected = true`. Bind `|`. Register `"select-col-regex"`.
 
 ---
 
 ### GAP-017 — Unselect rows matching regex (`\`)
 **Python**: `selection.py` — `unselect-col-regex`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Same as GAP-016 but set `row.selected = false`. Bind `\`.
 
 ---
 
 ### GAP-018 — Select rows matching regex in any visible column (`g|`)
 **Python**: `selection.py` — `select-cols-regex`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Same as GAP-016 but test all visible columns. Bind `g|` (g-prefix + `|`).
 
 ---
 
 ### GAP-019 — Unselect rows matching regex in any visible column (`g\`)
 **Python**: `selection.py` — `unselect-cols-regex`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Same as GAP-018 but deselect. Bind `g\`.
 
 ---
 
 ### GAP-020 — Select rows equal to current cell (`,`)
 **Python**: `selection.py` — `select-equal-cell` selects all rows where the current column equals the cursor cell's display value.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Read `col.display_value(&rows[cursor_row])` as the target. Iterate rows, select where `col.display_value(row) == target`. Bind `,`. Register `"select-equal-cell"`.
 
 ---
 
 ### GAP-021 — Select rows equal to entire current row (`g,`)
 **Python**: `selection.py` — `select-equal-row` — matches all visible columns.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Extend GAP-020: collect all visible column display values for cursor row; select any row that matches all of them. Bind `g,`.
 
 ---
@@ -204,49 +204,49 @@ Each entry has:
 
 ### GAP-027 — Slide column left (`H`)
 **Python**: `features/slide.py` — `slide-left` swaps the current column with the one to its left in `sheet.columns`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: In `dispatch_command("slide-left")`, find current column's index in `sheet.columns`, swap with index-1 if > 0. Also update `cursor_col`. Bind `H`.
 
 ---
 
 ### GAP-028 — Slide column right (`L`)
 **Python**: `features/slide.py` — `slide-right`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Swap with index+1 if < last. Bind `L`.
 
 ---
 
 ### GAP-029 — Slide column to leftmost (`gH`)
 **Python**: `features/slide.py` — `slide-leftmost`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Remove column from its position, insert at 0. Bind `gH`.
 
 ---
 
 ### GAP-030 — Slide column to rightmost (`gL`)
 **Python**: `features/slide.py` — `slide-rightmost`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Move to last position. Bind `gL`.
 
 ---
 
 ### GAP-031 — Slide row up/down (`J`, `K`, `gJ`, `gK`)
 **Python**: `features/slide.py` — `slide-down`, `slide-up`, `slide-bottom`, `slide-top`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Swap `rows[cursor_row]` with `rows[cursor_row ± 1]` (or move to end/start). Adjust `cursor_row`. Bind `J`/`K`/`gJ`/`gK`.
 
 ---
 
 ### GAP-032 — Unhide all columns (`gv`)
 **Python**: `features/layout.py` — `unhide-cols` sets width of all hidden columns back to `None` (auto).
-**Rust now**: Missing. Individual columns can be hidden with `-` but there's no bulk-unhide.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Iterate `sheet.columns`, find any with `width == Some(0)`, reset to `None`. Bind `gv`. Register `"unhide-cols"`.
 
 ---
 
 ### GAP-033 — Resize all columns to max width (`g_`)
 **Python**: `features/layout.py` — `resize-cols-max`.
-**Rust now**: Only per-column `_` exists.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Apply the auto-width computation to all visible columns (same logic as current per-column `_` in dispatch). Bind `g_`.
 
 ---
@@ -355,35 +355,35 @@ Each entry has:
 
 ### GAP-048 — Rename column not undoable
 **Python**: Rename is tracked in the undo log.
-**Rust now**: `^` rename sets `col.name` directly with no undo action pushed.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Before applying rename, push `UndoAction::RenameColumn { col_id, old_name }`. Add the variant to `UndoAction` enum in `undo.rs` and handle it in `sheet.undo()`.
 
 ---
 
 ### GAP-049 — Column type change not undoable
 **Python**: Type changes are undoable.
-**Rust now**: `#`, `%`, `$`, `~`, `@` type-changes are not recorded in the undo stack.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Add `UndoAction::SetColType { col_id, old_type }`. Push before changing `col.col_type`. Handle in `sheet.undo()`.
 
 ---
 
 ### GAP-050 — Fill nulls downward (`f`)
 **Python**: `features/fill.py` — `setcol-fill` propagates the last non-null value down through null cells in the current column.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Walk rows top-to-bottom on current column. Track last non-null `Value`. When a null cell is found, set it to last non-null. Push a bulk undo action. Bind `f`.
 
 ---
 
 ### GAP-051 — Delete cell (set to null) (`zd`)
 **Python**: `clipboard.py` — `delete-cell` sets the current cell to null without deleting the row.
-**Rust now**: Missing. `d` deletes the whole row.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: In dispatch, `"delete-cell"` calls `sheet.set_cell(cursor_row, col_source_idx, Value::Null)`. Bind `zd`.
 
 ---
 
 ### GAP-052 — Delete selected cells in column (`gzd`)
 **Python**: `clipboard.py` — `delete-cells` nulls selected rows' current column.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Iterate selected rows, call `sheet.set_cell(row_idx, col_source_idx, Value::Null)` for each. Bind `gzd`.
 
 ---
@@ -415,14 +415,14 @@ Each entry has:
 
 ### GAP-056 — Cut row (`x`)
 **Python**: `clipboard.py` — `cut-row` copies then deletes the current row.
-**Rust now**: Missing. Only `y` (yank) exists.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: In dispatch `"cut-row"`, call `clipboard.yank_cell` (or copy full row), then `sheet.delete_row_at(cursor_row)`. Bind `x`.
 
 ---
 
 ### GAP-057 — Cut selected rows (`gx`)
 **Python**: `clipboard.py` — `cut-selected`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Copy selected rows to clipboard, then `sheet.delete_selected_rows()`. Bind `gx`.
 
 ---
@@ -436,14 +436,14 @@ Each entry has:
 
 ### GAP-059 — Yank row (`gy`) — registered but not dispatched
 **Python**: `clipboard.py` — copies the whole current row's values to clipboard as a `Row`.
-**Rust now**: `"gy"` registered in `builtin_commands` but not handled in `handle_normal_key` or `dispatch_command`.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: In the g-prefix match block in `handle_normal_key`, add `Char('y') => self.dispatch_command("yank-row")`. In `dispatch_command("yank-row")`, clone `rows[cursor_row]`, store in `self.clipboard`. Confirm `Clipboard` struct supports full-row storage (currently stores one `Value`); extend if needed.
 
 ---
 
 ### GAP-060 — Paste row after current (`gp`) — registered but not dispatched
 **Python**: `clipboard.py` — `paste-after` inserts yanked row after cursor.
-**Rust now**: `"gp"` registered but not wired.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Same as GAP-059 for paste: handle in g-prefix block. Insert clipboard row at `cursor_row + 1`.
 
 ---
@@ -475,21 +475,21 @@ Each entry has:
 
 ### GAP-064 — Search key column (`r`)
 **Python**: `search.py` — `search-keys` searches the key column(s) only.
-**Rust now**: Missing. `/` searches the cursor column.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Same as existing `search-col` but targets the first key column (`sheet.columns.iter().find(|c| c.is_key)`). Bind `r`.
 
 ---
 
 ### GAP-065 — Search all visible columns (`g/`)
 **Python**: `search.py` — `search-cols` forward-searches across all visible columns.
-**Rust now**: `/` searches cursor column only.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: In `repeat_search` / `search_forward`, try each visible column in order; move cursor when any matches. Add `SearchScope::AllCols` variant to search state. Bind `g/`.
 
 ---
 
 ### GAP-066 — Search all visible columns backward (`g?`)
 **Python**: `search.py` — `searchr-cols`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Same as GAP-065 but backward. Bind `g?`.
 
 ---
@@ -507,28 +507,28 @@ Each entry has:
 
 ### GAP-068 — Sort ascending by all key columns (`g[`)
 **Python**: `sort.py` — `sort-keys-asc` sorts by all `is_key` columns ascending.
-**Rust now**: `[` sorts by cursor column only.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Collect all column indices where `col.is_key == true`. Call `sheet.sort_by_multi(key_indices, SortDirection::Ascending)` — add this multi-key sort method to `Sheet`. Bind `g[`.
 
 ---
 
 ### GAP-069 — Sort descending by all key columns (`g]`)
 **Python**: `sort.py` — `sort-keys-desc`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Same as GAP-068 but descending. Bind `g]`.
 
 ---
 
 ### GAP-070 — Additive sort ascending (`z[`)
 **Python**: `sort.py` — `sort-asc-change` — appends current column to the sort criteria rather than replacing it.
-**Rust now**: `[` replaces existing sort.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Add `"sort-asc-add"` command that pushes a new `SortKey` onto `sheet.sort_keys` without clearing existing keys, then re-sorts. Bind `z[`.
 
 ---
 
 ### GAP-071 — Additive sort descending (`z]`)
 **Python**: `sort.py` — `sort-desc-change`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Same as GAP-070 but descending. Bind `z]`.
 
 ---
@@ -546,21 +546,21 @@ Each entry has:
 
 ### GAP-073 — Duplicate sheet with all rows (`g"`)
 **Python**: `sheets.py` — `dup-rows` opens a full copy of the sheet with all rows.
-**Rust now**: Only `"` (dup-selected) exists.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Add `sheet.all_rows_sheet()` — clone all rows into a new Sheet with same columns. In dispatch `"dup-rows"`, push it. Bind `g"` (g-prefix + `"`).
 
 ---
 
 ### GAP-074 — Deep copy of selected rows (`z"`)
 **Python**: `sheets.py` — `dup-selected-deep` — deep copy (no shared references).
-**Rust now**: Missing. Rust `Row` already derives `Clone` so there are no shared references; a deep copy is the same as a regular clone.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Same as `"` (dup-selected) in Rust since `Row` and `Value` are all owned. Register `"dup-selected-deep"` as an alias. Bind `z"`.
 
 ---
 
 ### GAP-075 — Deep copy of all rows (`gz"`)
 **Python**: `sheets.py` — `dup-rows-deep`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Same as GAP-073. Bind `gz"`.
 
 ---
@@ -650,7 +650,7 @@ Each entry has:
 
 ### GAP-087 — Open new empty sheet (`A`)
 **Python**: `sheets.py` — `open-new` creates a blank sheet with no columns.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Push `Sheet::new("unnamed")` onto the stack. Bind `A`. Register `"open-new"`.
 
 ---
@@ -855,7 +855,7 @@ Each entry has:
 
 ### GAP-112 — Reload sheet from source (`Ctrl+R`)
 **Python**: `sheets.py` — `reload-sheet` re-runs the loader for the current sheet's source path, replacing rows/columns.
-**Rust now**: Missing. No way to refresh data from the source file.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: In `dispatch_command("reload-sheet")`, if `sheet.source` is set, call `registry.load_file(&source_path)`, then replace `sheet.rows` and `sheet.columns` with the new sheet's data (keep `sheet.name`, `sheet.source`, cursor position). Bind `Ctrl+R`.
 
 ---
@@ -950,7 +950,7 @@ Each entry has:
 
 ### GAP-125 — Redraw / refresh screen (`Ctrl+L`)
 **Python**: `Ctrl+L` forces a full terminal redraw.
-**Rust now**: Missing. ratatui redraws every frame but there's no explicit redraw command.
+**Rust now**: ✅ Implemented (commit: feat/rust session).
 **Instructions**: Add `Ctrl+L` handling in `handle_normal_key` that calls `terminal.clear()` before the next render. Bind `Ctrl+L`.
 
 ---
@@ -986,7 +986,7 @@ Each entry has:
 
 ### GAP-129 — Redo (`R`)
 **Python**: `undo.py` — `redo-last` replays the most recently undone action.
-**Rust now**: `UndoStack` only pops; there is no redo stack.
+**Rust now**: ✅ Implemented (commit: feat/rust session). Partial: works for InsertRow/DeleteRow/DeleteRows; cell/rename/type-change redo deferred.
 **Instructions**: Add `redo_stack: Vec<UndoAction>` to `UndoStack`. When `sheet.undo()` pops an action and reverses it, push the action to `redo_stack`. Add `sheet.redo()` that pops from `redo_stack`, re-applies the action, and pushes to `undo_stack`. Any new edit clears `redo_stack`. Bind `R`.
 
 ---

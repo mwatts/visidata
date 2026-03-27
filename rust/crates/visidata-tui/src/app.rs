@@ -27,6 +27,16 @@ use crate::input::{EditResult, LineEditor};
 use crate::renderer;
 use crate::theme::Theme;
 
+/// Which columns a search targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum SearchScope {
+    /// Current cursor column only.
+    #[default]
+    CurrentCol,
+    /// First key column (if any), falling back to current col.
+    KeyCols,
+}
+
 /// What the input line is being used for.
 #[derive(Debug, Clone)]
 enum InputMode {
@@ -40,6 +50,14 @@ enum InputMode {
     SearchForward(LineEditor),
     /// Backward search in current column.
     SearchBackward(LineEditor),
+    /// Forward search across all visible columns.
+    SearchForwardAllCols(LineEditor),
+    /// Backward search across all visible columns.
+    SearchBackwardAllCols(LineEditor),
+    /// Select/unselect rows matching regex in current column (`|` / `\`).
+    SelectColRegex { editor: LineEditor, select: bool },
+    /// Select/unselect rows matching regex in any visible column (`g|` / `g\`).
+    SelectAllColsRegex { editor: LineEditor, select: bool },
     /// Command palette (fuzzy search by longname).
     CommandPalette(LineEditor),
     /// Menu navigation mode.
@@ -68,6 +86,9 @@ pub struct App {
 
     /// Whether last search was forward (true) or backward (false).
     last_search_forward: bool,
+
+    /// Which columns the last search targeted.
+    last_search_scope: SearchScope,
 
     /// Command registry.
     pub commands: CommandRegistry,
@@ -101,6 +122,9 @@ pub struct App {
 
     /// Keystrokes queued for replay.
     macro_replay: Vec<String>,
+
+    /// Redo stack: actions popped by undo, waiting to be re-applied.
+    redo_stack: Vec<visidata_core::undo::UndoAction>,
 }
 
 impl App {
@@ -116,6 +140,7 @@ impl App {
             mode: InputMode::Normal,
             last_search: None,
             last_search_forward: true,
+            last_search_scope: SearchScope::default(),
             commands: builtin_commands(),
             options: visidata_core::options::builtin_options(),
             theme: Theme::default(),
@@ -127,6 +152,7 @@ impl App {
             macro_recorder: visidata_core::macros::MacroRecorder::new(),
             macro_store: visidata_core::macros::MacroStore::new(),
             macro_replay: vec![],
+            redo_stack: vec![],
         }
     }
 
@@ -183,6 +209,10 @@ impl App {
                         | InputMode::EditCell(_)
                         | InputMode::SearchForward(_)
                         | InputMode::SearchBackward(_)
+                        | InputMode::SearchForwardAllCols(_)
+                        | InputMode::SearchBackwardAllCols(_)
+                        | InputMode::SelectColRegex { .. }
+                        | InputMode::SelectAllColsRegex { .. }
                         | InputMode::CommandPalette(_) => self.handle_input_key(key),
                     },
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
@@ -266,6 +296,20 @@ impl App {
                 InputMode::EditCell(editor) => Some(format!("edit: {}", editor.text())),
                 InputMode::SearchForward(editor) => Some(format!("/{}", editor.text())),
                 InputMode::SearchBackward(editor) => Some(format!("?{}", editor.text())),
+                InputMode::SearchForwardAllCols(editor) => {
+                    Some(format!("g/{}", editor.text()))
+                }
+                InputMode::SearchBackwardAllCols(editor) => {
+                    Some(format!("g?{}", editor.text()))
+                }
+                InputMode::SelectColRegex { editor, select } => {
+                    let prefix = if *select { "|" } else { "\\" };
+                    Some(format!("{prefix}{}", editor.text()))
+                }
+                InputMode::SelectAllColsRegex { editor, select } => {
+                    let prefix = if *select { "g|" } else { "g\\" };
+                    Some(format!("{prefix}{}", editor.text()))
+                }
                 // These modes render as overlays; suppress the inline input bar.
                 InputMode::Normal
                 | InputMode::CommandPalette(_)
@@ -322,13 +366,7 @@ impl App {
 
         // Ctrl+Z = undo
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('z') {
-            if let Some(sheet) = self.stack.active_mut() {
-                if sheet.undo() {
-                    self.status = "undone".into();
-                } else {
-                    self.status = "nothing to undo".into();
-                }
-            }
+            self.do_undo();
             self.update_status();
             return;
         }
@@ -339,44 +377,170 @@ impl App {
             return;
         }
 
-        // Handle pending prefix (g-prefixed commands)
+        // Ctrl+L = redraw
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('l') {
+            self.dispatch_command("redraw");
+            return;
+        }
+
+        // Ctrl+R = reload sheet
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
+            self.dispatch_command("reload-sheet");
+            return;
+        }
+
+        // Handle pending prefix (g/z/gz-prefixed commands)
         if let Some(prefix) = self.pending_prefix.take() {
-            if prefix == 'g' {
-                match key.code {
-                    KeyCode::Char('d') => {
-                        if let Some(s) = self.stack.active_mut() {
-                            let count = s.delete_selected_rows();
-                            self.status = format!("deleted {count} rows");
-                        }
-                        self.update_status();
-                        return;
+            match (prefix, key.code) {
+                // --- g-prefixed ---
+                ('g', KeyCode::Char('d')) => {
+                    if let Some(s) = self.stack.active_mut() {
+                        let count = s.delete_selected_rows();
+                        self.status = format!("deleted {count} rows");
                     }
-                    KeyCode::Char('j') => {
-                        if let Some(s) = self.stack.active_mut()
-                            && !s.rows.is_empty()
-                        {
-                            s.cursor_row = s.rows.len() - 1;
-                        }
-                        self.update_status();
-                        return;
+                    self.update_status();
+                    return;
+                }
+                ('g', KeyCode::Char('j')) => {
+                    if let Some(s) = self.stack.active_mut()
+                        && !s.rows.is_empty()
+                    {
+                        s.cursor_row = s.rows.len() - 1;
                     }
-                    KeyCode::Char('k') => {
-                        if let Some(s) = self.stack.active_mut() {
-                            s.cursor_row = 0;
-                            s.top_row = 0;
-                        }
-                        self.update_status();
-                        return;
+                    self.update_status();
+                    return;
+                }
+                ('g', KeyCode::Char('k')) => {
+                    if let Some(s) = self.stack.active_mut() {
+                        s.cursor_row = 0;
+                        s.top_row = 0;
                     }
-                    _ => {
-                        // Unknown g-prefixed key — ignore silently
-                        self.update_status();
-                        return;
+                    self.update_status();
+                    return;
+                }
+                ('g', KeyCode::Char('s')) => {
+                    if let Some(s) = self.stack.active_mut() {
+                        s.select_all();
+                        self.status = format!("selected {} rows", s.rows.len());
                     }
+                    self.update_status();
+                    return;
+                }
+                ('g', KeyCode::Char('u')) => {
+                    if let Some(s) = self.stack.active_mut() {
+                        s.unselect_all();
+                    }
+                    self.update_status();
+                    return;
+                }
+                ('g', KeyCode::Char('t')) => {
+                    if let Some(s) = self.stack.active_mut() {
+                        s.toggle_select_all();
+                    }
+                    self.update_status();
+                    return;
+                }
+                ('g', KeyCode::Char('H')) => {
+                    self.dispatch_command("slide-leftmost");
+                    return;
+                }
+                ('g', KeyCode::Char('L')) => {
+                    self.dispatch_command("slide-rightmost");
+                    return;
+                }
+                ('g', KeyCode::Char('J')) => {
+                    self.dispatch_command("slide-row-bottom");
+                    return;
+                }
+                ('g', KeyCode::Char('K')) => {
+                    self.dispatch_command("slide-row-top");
+                    return;
+                }
+                ('g', KeyCode::Char('x')) => {
+                    self.dispatch_command("cut-selected");
+                    return;
+                }
+                ('g', KeyCode::Char('y')) => {
+                    self.dispatch_command("yank-row");
+                    return;
+                }
+                ('g', KeyCode::Char('p')) => {
+                    self.dispatch_command("paste-after");
+                    return;
+                }
+                ('g', KeyCode::Char('_')) => {
+                    self.dispatch_command("resize-cols-max");
+                    return;
+                }
+                ('g', KeyCode::Char('v')) => {
+                    self.dispatch_command("unhide-cols");
+                    return;
+                }
+                ('g', KeyCode::Char('[')) => {
+                    self.dispatch_command("sort-keys-asc");
+                    return;
+                }
+                ('g', KeyCode::Char(']')) => {
+                    self.dispatch_command("sort-keys-desc");
+                    return;
+                }
+                ('g', KeyCode::Char('"')) => {
+                    self.dispatch_command("dup-rows");
+                    return;
+                }
+                ('g', KeyCode::Char('/')) => {
+                    self.mode =
+                        InputMode::SearchForwardAllCols(LineEditor::new(""));
+                    return;
+                }
+                ('g', KeyCode::Char('?')) => {
+                    self.mode =
+                        InputMode::SearchBackwardAllCols(LineEditor::new(""));
+                    return;
+                }
+                ('g', KeyCode::Char(',')) => {
+                    self.dispatch_command("select-equal-row");
+                    return;
+                }
+                ('g', KeyCode::Char('|')) => {
+                    self.mode = InputMode::SelectAllColsRegex {
+                        editor: LineEditor::new(""),
+                        select: true,
+                    };
+                    return;
+                }
+                ('g', KeyCode::Char('\\')) => {
+                    self.mode = InputMode::SelectAllColsRegex {
+                        editor: LineEditor::new(""),
+                        select: false,
+                    };
+                    return;
+                }
+
+                // --- z-prefixed ---
+                ('z', KeyCode::Char('z')) => {
+                    self.dispatch_command("scroll-middle");
+                    return;
+                }
+                ('z', KeyCode::Char('d')) => {
+                    self.dispatch_command("delete-cell");
+                    return;
+                }
+                ('z', KeyCode::Char('[')) => {
+                    self.dispatch_command("sort-asc-add");
+                    return;
+                }
+                ('z', KeyCode::Char(']')) => {
+                    self.dispatch_command("sort-desc-add");
+                    return;
+                }
+
+                _ => {
+                    // Unknown prefixed key — ignore silently
+                    self.update_status();
+                    return;
                 }
             }
-            self.update_status();
-            return;
         }
 
         // Enter = open-row (drill into table/view on index sheets).
@@ -419,9 +583,13 @@ impl App {
                 sheet.cursor_row = 0;
                 sheet.top_row = 0;
             }
-            // 'g' sets pending prefix for multi-key bindings (gd, gj, gk)
+            // 'g' and 'z' set pending prefix for multi-key bindings
             KeyCode::Char('g') => {
                 self.pending_prefix = Some('g');
+                return;
+            }
+            KeyCode::Char('z') => {
+                self.pending_prefix = Some('z');
                 return;
             }
             KeyCode::End => {
@@ -502,7 +670,7 @@ impl App {
                 }
             }
 
-            // --- Type conversion ---
+            // --- Type conversion (undoable) ---
             KeyCode::Char('#') => set_cursor_col_type(sheet, ColumnType::Int),
             KeyCode::Char('%') => set_cursor_col_type(sheet, ColumnType::Float),
             KeyCode::Char('$') => set_cursor_col_type(sheet, ColumnType::Currency),
@@ -536,13 +704,92 @@ impl App {
                 sheet.toggle_select_current();
                 sheet.cursor_down(1);
             }
+            KeyCode::Char('|') => {
+                self.mode = InputMode::SelectColRegex {
+                    editor: LineEditor::new(""),
+                    select: true,
+                };
+                return;
+            }
+            KeyCode::Char('\\') => {
+                self.mode = InputMode::SelectColRegex {
+                    editor: LineEditor::new(""),
+                    select: false,
+                };
+                return;
+            }
+            KeyCode::Char(',') => {
+                self.dispatch_command("select-equal-cell");
+                return;
+            }
+
+            // --- Navigation: go to different/selected value ---
+            KeyCode::Char('<') => {
+                self.dispatch_command("go-prev-value");
+                return;
+            }
+            KeyCode::Char('>') => {
+                self.dispatch_command("go-next-value");
+                return;
+            }
+            KeyCode::Char('{') => {
+                self.dispatch_command("go-prev-selected");
+                return;
+            }
+            KeyCode::Char('}') => {
+                self.dispatch_command("go-next-selected");
+                return;
+            }
+
+            // --- Column sliding ---
+            KeyCode::Char('H') => {
+                self.dispatch_command("slide-left");
+                return;
+            }
+            KeyCode::Char('L') => {
+                self.dispatch_command("slide-right");
+                return;
+            }
+            KeyCode::Char('J') => {
+                self.dispatch_command("slide-row-down");
+                return;
+            }
+            KeyCode::Char('K') => {
+                self.dispatch_command("slide-row-up");
+                return;
+            }
+
+            // --- Clipboard ---
+            KeyCode::Char('x') => {
+                self.dispatch_command("cut-row");
+                return;
+            }
+
+            // --- Editing ---
+            KeyCode::Char('f') => {
+                self.dispatch_command("fill-down");
+                return;
+            }
+            KeyCode::Char('A') => {
+                self.dispatch_command("open-new");
+                return;
+            }
+
+            // --- Redo ---
+            KeyCode::Char('R') => {
+                self.do_redo();
+                self.update_status();
+                return;
+            }
 
             // --- Search ---
             KeyCode::Char('/') => {
+                self.last_search_scope = SearchScope::CurrentCol;
                 self.mode = InputMode::SearchForward(LineEditor::new(""));
                 return;
             }
             KeyCode::Char('?') => {
+                self.last_search_scope = SearchScope::CurrentCol;
                 self.mode = InputMode::SearchBackward(LineEditor::new(""));
                 return;
             }
@@ -551,6 +798,12 @@ impl App {
             }
             KeyCode::Char('N') => {
                 self.repeat_search(false);
+            }
+            KeyCode::Char('r') => {
+                // Search key columns — set scope then enter search mode
+                self.last_search_scope = SearchScope::KeyCols;
+                self.mode = InputMode::SearchForward(LineEditor::new(""));
+                return;
             }
 
             // --- Filter (selected rows to new sheet) ---
@@ -713,6 +966,7 @@ impl App {
     }
 
     /// Handle a key event while in input mode.
+    #[expect(clippy::too_many_lines, reason = "flat match dispatch for all input modes")]
     fn handle_input_key(&mut self, key: KeyEvent) {
         let key_str = key_event_to_string(&key);
 
@@ -722,16 +976,15 @@ impl App {
             InputMode::RenameColumn(mut editor) => {
                 match editor.handle_key(&key_str) {
                     EditResult::Accept(new_name) => {
-                        // Apply rename
+                        // Apply rename with undo tracking
                         if let Some(sheet) = self.stack.active_mut() {
                             let vis = sheet.visible_columns();
                             if let Some(&col) = vis.get(sheet.cursor_col) {
-                                let col_idx = sheet.columns.iter().position(|c| c.id == col.id);
-                                if let Some(idx) = col_idx {
-                                    sheet.columns[idx].name = new_name;
-                                }
+                                let col_id = col.id.0;
+                                sheet.rename_column(col_id, new_name);
                             }
                         }
+                        self.redo_stack.clear();
                         self.mode = InputMode::Normal;
                     }
                     EditResult::Cancel => {
@@ -789,6 +1042,94 @@ impl App {
                     self.mode = InputMode::SearchBackward(editor);
                 }
             },
+            InputMode::SearchForwardAllCols(mut editor) => {
+                match editor.handle_key(&key_str) {
+                    EditResult::Accept(pattern) => {
+                        self.last_search = Some(pattern.clone());
+                        self.last_search_forward = true;
+                        self.last_search_scope = SearchScope::CurrentCol; // all-cols uses its own path
+                        self.execute_search_all_cols(&pattern, true);
+                        self.mode = InputMode::Normal;
+                    }
+                    EditResult::Cancel => {
+                        self.mode = InputMode::Normal;
+                    }
+                    EditResult::Continue => {
+                        self.mode = InputMode::SearchForwardAllCols(editor);
+                    }
+                }
+            }
+            InputMode::SearchBackwardAllCols(mut editor) => {
+                match editor.handle_key(&key_str) {
+                    EditResult::Accept(pattern) => {
+                        self.last_search = Some(pattern.clone());
+                        self.last_search_forward = false;
+                        self.last_search_scope = SearchScope::CurrentCol;
+                        self.execute_search_all_cols(&pattern, false);
+                        self.mode = InputMode::Normal;
+                    }
+                    EditResult::Cancel => {
+                        self.mode = InputMode::Normal;
+                    }
+                    EditResult::Continue => {
+                        self.mode = InputMode::SearchBackwardAllCols(editor);
+                    }
+                }
+            }
+            InputMode::SelectColRegex { mut editor, select } => {
+                match editor.handle_key(&key_str) {
+                    EditResult::Accept(pattern) => {
+                        let col_idx = self
+                            .stack
+                            .active()
+                            .and_then(resolve_cursor_col_idx);
+                        if let (Some(col_idx), Some(sheet)) =
+                            (col_idx, self.stack.active_mut())
+                        {
+                            match sheet.select_by_col_regex(col_idx, &pattern, select) {
+                                Some(n) => {
+                                    let verb = if select { "selected" } else { "unselected" };
+                                    self.status = format!("{verb} {n} rows");
+                                }
+                                None => {
+                                    self.status = format!("invalid regex: {pattern}");
+                                }
+                            }
+                        }
+                        self.mode = InputMode::Normal;
+                    }
+                    EditResult::Cancel => {
+                        self.mode = InputMode::Normal;
+                    }
+                    EditResult::Continue => {
+                        self.mode = InputMode::SelectColRegex { editor, select };
+                    }
+                }
+            }
+            InputMode::SelectAllColsRegex { mut editor, select } => {
+                match editor.handle_key(&key_str) {
+                    EditResult::Accept(pattern) => {
+                        if let Some(sheet) = self.stack.active_mut() {
+                            match sheet.select_by_any_col_regex(&pattern, select) {
+                                Some(n) => {
+                                    let verb = if select { "selected" } else { "unselected" };
+                                    self.status = format!("{verb} {n} rows");
+                                }
+                                None => {
+                                    self.status = format!("invalid regex: {pattern}");
+                                }
+                            }
+                        }
+                        self.mode = InputMode::Normal;
+                    }
+                    EditResult::Cancel => {
+                        self.mode = InputMode::Normal;
+                    }
+                    EditResult::Continue => {
+                        self.mode = InputMode::SelectAllColsRegex { editor, select };
+                    }
+                }
+            }
             InputMode::CommandPalette(mut editor) => match editor.handle_key(&key_str) {
                 EditResult::Accept(query) => {
                     self.execute_command_by_query(&query);
@@ -1007,15 +1348,7 @@ impl App {
                     self.status = format!("deleted {count} rows");
                 }
             }
-            "undo" => {
-                if let Some(s) = self.stack.active_mut() {
-                    if s.undo() {
-                        self.status = "undone".into();
-                    } else {
-                        self.status = "nothing to undo".into();
-                    }
-                }
-            }
+            "undo" => self.do_undo(),
             "save-sheet" => self.save_current_sheet(),
             "yank-cell" => {
                 if let Some(s) = self.stack.active()
@@ -1100,13 +1433,545 @@ impl App {
                     self.status = "no macro recorded".into();
                 }
             }
+
+            // --- Navigation ---
+            "go-prev-value" => {
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    let cur_val = s.columns[col_idx].display_value(&s.rows[s.cursor_row]);
+                    let start = s.cursor_row;
+                    for i in (0..start).rev() {
+                        let val = s.columns[col_idx].display_value(&s.rows[i]);
+                        if val != cur_val {
+                            s.cursor_row = i;
+                            break;
+                        }
+                    }
+                }
+            }
+            "go-next-value" => {
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    let cur_val = s.columns[col_idx].display_value(&s.rows[s.cursor_row]);
+                    let start = s.cursor_row + 1;
+                    for i in start..s.rows.len() {
+                        let val = s.columns[col_idx].display_value(&s.rows[i]);
+                        if val != cur_val {
+                            s.cursor_row = i;
+                            break;
+                        }
+                    }
+                }
+            }
+            "go-prev-selected" => {
+                if let Some(s) = self.stack.active_mut() && !s.rows.is_empty() {
+                    let start = s.cursor_row;
+                    for i in (0..start).rev() {
+                        if s.rows[i].selected {
+                            s.cursor_row = i;
+                            break;
+                        }
+                    }
+                }
+            }
+            "go-next-selected" => {
+                if let Some(s) = self.stack.active_mut() && !s.rows.is_empty() {
+                    let start = s.cursor_row + 1;
+                    for i in start..s.rows.len() {
+                        if s.rows[i].selected {
+                            s.cursor_row = i;
+                            break;
+                        }
+                    }
+                }
+            }
+            "scroll-middle" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let height = crossterm::terminal::size().map_or(20, |(_, h)| h as usize);
+                    s.top_row = s.cursor_row.saturating_sub(height / 2);
+                }
+            }
+
+            // --- Selection ---
+            "select-rows" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.select_all();
+                    self.status = format!("selected {} rows", s.rows.len());
+                }
+            }
+            "unselect-rows" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.unselect_all();
+                }
+            }
+            "stoggle-rows" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.toggle_select_all();
+                }
+            }
+            "select-equal-cell" => {
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    let target = s.columns[col_idx].display_value(&s.rows[s.cursor_row]);
+                    let mut count = 0;
+                    for row in &mut s.rows {
+                        if s.columns[col_idx].display_value(row) == target {
+                            row.selected = true;
+                            count += 1;
+                        }
+                    }
+                    self.status = format!("selected {count} rows");
+                }
+            }
+            "select-equal-row" => {
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                {
+                    let vis_indices: Vec<usize> = s
+                        .columns
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| !c.is_hidden())
+                        .map(|(i, _)| i)
+                        .collect();
+                    let target: Vec<String> = vis_indices
+                        .iter()
+                        .map(|&ci| s.columns[ci].display_value(&s.rows[s.cursor_row]))
+                        .collect();
+                    let mut count = 0;
+                    for row in &mut s.rows {
+                        let row_vals: Vec<String> = vis_indices
+                            .iter()
+                            .map(|&ci| s.columns[ci].display_value(row))
+                            .collect();
+                        if row_vals == target {
+                            row.selected = true;
+                            count += 1;
+                        }
+                    }
+                    self.status = format!("selected {count} rows");
+                }
+            }
+
+            // --- Column sliding ---
+            "slide-left" => {
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(idx) = resolve_cursor_col_idx(s)
+                    && idx > 0
+                {
+                    s.columns.swap(idx, idx - 1);
+                    s.cursor_col = s.cursor_col.saturating_sub(1);
+                }
+            }
+            "slide-right" => {
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(idx) = resolve_cursor_col_idx(s)
+                    && idx + 1 < s.columns.len()
+                {
+                    s.columns.swap(idx, idx + 1);
+                    let max_vis = s.visible_columns().len().saturating_sub(1);
+                    s.cursor_col = (s.cursor_col + 1).min(max_vis);
+                }
+            }
+            "slide-leftmost" => {
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(idx) = resolve_cursor_col_idx(s)
+                    && idx > 0
+                {
+                    let col = s.columns.remove(idx);
+                    s.columns.insert(0, col);
+                    s.cursor_col = 0;
+                }
+            }
+            "slide-rightmost" => {
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(idx) = resolve_cursor_col_idx(s)
+                {
+                    let last = s.columns.len() - 1;
+                    if idx < last {
+                        let col = s.columns.remove(idx);
+                        s.columns.push(col);
+                        s.cursor_col = s.visible_columns().len() - 1;
+                    }
+                }
+            }
+
+            // --- Row sliding ---
+            "slide-row-down" => {
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                    && s.cursor_row + 1 < s.rows.len()
+                {
+                    s.rows.swap(s.cursor_row, s.cursor_row + 1);
+                    s.cursor_row += 1;
+                }
+            }
+            "slide-row-up" => {
+                if let Some(s) = self.stack.active_mut()
+                    && s.cursor_row > 0
+                {
+                    s.rows.swap(s.cursor_row, s.cursor_row - 1);
+                    s.cursor_row -= 1;
+                }
+            }
+            "slide-row-bottom" => {
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                {
+                    let last = s.rows.len() - 1;
+                    if s.cursor_row < last {
+                        let row = s.rows.remove(s.cursor_row);
+                        s.rows.push(row);
+                        s.cursor_row = last;
+                    }
+                }
+            }
+            "slide-row-top" => {
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                    && s.cursor_row > 0
+                {
+                    let row = s.rows.remove(s.cursor_row);
+                    s.rows.insert(0, row);
+                    s.cursor_row = 0;
+                }
+            }
+
+            // --- Column resize / visibility ---
+            "resize-cols-max" => {
+                if let Some(s) = self.stack.active_mut() {
+                    resize_all_columns(s);
+                }
+            }
+            "unhide-cols" => {
+                if let Some(s) = self.stack.active_mut() {
+                    for col in &mut s.columns {
+                        if col.width == Some(0) {
+                            col.width = None;
+                        }
+                    }
+                }
+            }
+
+            // --- Sorting ---
+            "sort-keys-asc" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.sort_by_keys(SortDirection::Ascending);
+                }
+            }
+            "sort-keys-desc" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.sort_by_keys(SortDirection::Descending);
+                }
+            }
+            "sort-asc-add" => {
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(idx) = resolve_cursor_col_idx(s)
+                {
+                    s.sort_by_add(idx, SortDirection::Ascending);
+                }
+            }
+            "sort-desc-add" => {
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(idx) = resolve_cursor_col_idx(s)
+                {
+                    s.sort_by_add(idx, SortDirection::Descending);
+                }
+            }
+
+            // --- Filtering / duplication ---
+            "dup-rows" => {
+                if let Some(s) = self.stack.active() {
+                    let copy = s.all_rows_sheet();
+                    self.stack.push(copy);
+                }
+            }
+            "dup-selected-deep" | "dup-rows-deep" => {
+                // In Rust, Row/Value are all owned; deep copy == shallow copy
+                if longname == "dup-rows-deep" {
+                    if let Some(s) = self.stack.active() {
+                        let copy = s.all_rows_sheet();
+                        self.stack.push(copy);
+                    }
+                } else if let Some(s) = self.stack.active()
+                    && s.num_selected() > 0
+                {
+                    let copy = s.selected_rows_sheet();
+                    self.stack.push(copy);
+                }
+            }
+
+            // --- Search ---
+            "search-keys" => {
+                self.last_search_scope = SearchScope::KeyCols;
+                self.mode = InputMode::SearchForward(LineEditor::new(""));
+            }
+            "search-cols" => {
+                self.mode = InputMode::SearchForwardAllCols(LineEditor::new(""));
+            }
+            "searchr-cols" => {
+                self.mode = InputMode::SearchBackwardAllCols(LineEditor::new(""));
+            }
+
+            // --- Editing ---
+            "fill-down" => {
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    let source_idx = s.columns[col_idx].source_idx;
+                    s.fill_down(source_idx);
+                }
+            }
+            "delete-cell" => {
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    let source_idx = s.columns[col_idx].source_idx;
+                    s.set_cell(s.cursor_row, source_idx, visidata_core::Value::Null);
+                }
+            }
+            "delete-cells" => {
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    let source_idx = s.columns[col_idx].source_idx;
+                    let selected_indices: Vec<usize> = s
+                        .rows
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, r)| r.selected)
+                        .map(|(i, _)| i)
+                        .collect();
+                    for idx in selected_indices {
+                        s.set_cell(idx, source_idx, visidata_core::Value::Null);
+                    }
+                }
+            }
+            "open-new" => {
+                let sheet = Sheet::new("unnamed");
+                self.stack.push(sheet);
+            }
+
+            // --- Clipboard ---
+            "cut-row" => {
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                    && let Some(row) = s.delete_row_at(s.cursor_row)
+                {
+                    self.clipboard.yank_rows(vec![row]);
+                    self.status = "cut row".into();
+                }
+            }
+            "cut-selected" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let rows: Vec<_> = s
+                        .rows
+                        .iter()
+                        .filter(|r| r.selected)
+                        .cloned()
+                        .collect();
+                    if !rows.is_empty() {
+                        let count = s.delete_selected_rows();
+                        self.clipboard.yank_rows(rows);
+                        self.status = format!("cut {count} rows");
+                    }
+                }
+            }
+            "yank-row" => {
+                if let Some(s) = self.stack.active()
+                    && !s.rows.is_empty()
+                {
+                    let row = s.rows[s.cursor_row].clone();
+                    self.clipboard.yank_rows(vec![row]);
+                    self.status = "yanked row".into();
+                }
+            }
+            "paste-after" => {
+                if let visidata_core::clipboard::ClipboardContent::Rows(rows) =
+                    self.clipboard.content().clone()
+                    && let Some(s) = self.stack.active_mut()
+                {
+                    let insert_at = (s.cursor_row + 1).min(s.rows.len());
+                    for (offset, row) in rows.into_iter().enumerate() {
+                        s.rows.insert(insert_at + offset, row);
+                    }
+                    s.modified = true;
+                }
+            }
+
+            // --- Redo ---
+            "redo" => self.do_redo(),
+
+            // --- TUI ---
+            "redraw" => {
+                // Handled externally by the event loop — just mark for redraw.
+                // In ratatui the next frame will redraw automatically.
+            }
+            "reload-sheet" => {
+                self.reload_current_sheet();
+            }
+
             _ => {
                 self.status = format!("unknown command: {longname}");
             }
         }
     }
 
-    /// Execute a search in the given direction.
+    /// Undo the last action, saving it to the redo stack.
+    fn do_undo(&mut self) {
+        let Some(sheet) = self.stack.active_mut() else {
+            return;
+        };
+        // Peek at the top action before popping
+        let action = sheet.undo_stack.pop();
+        if let Some(action) = action {
+            // Re-apply the undo by cloning the action onto the redo stack before undoing
+            self.redo_stack.push(action.clone());
+            // Now manually undo the action (replicate sheet.undo() logic inline
+            // so we don't double-pop)
+            match action {
+                visidata_core::undo::UndoAction::SetCell {
+                    row_idx,
+                    col_source_idx,
+                    old_value,
+                } => {
+                    if let Some(row) = sheet.rows.get_mut(row_idx) {
+                        row.set(col_source_idx, old_value);
+                    }
+                }
+                visidata_core::undo::UndoAction::BulkSetCell { changes } => {
+                    for (row_idx, col_source_idx, old_value) in changes {
+                        if let Some(row) = sheet.rows.get_mut(row_idx) {
+                            row.set(col_source_idx, old_value);
+                        }
+                    }
+                }
+                visidata_core::undo::UndoAction::InsertRow { row_idx } => {
+                    if row_idx < sheet.rows.len() {
+                        sheet.rows.remove(row_idx);
+                    }
+                }
+                visidata_core::undo::UndoAction::DeleteRow { row_idx, row } => {
+                    let idx = row_idx.min(sheet.rows.len());
+                    sheet.rows.insert(idx, row);
+                }
+                visidata_core::undo::UndoAction::DeleteRows { entries } => {
+                    for (idx, row) in entries.into_iter().rev() {
+                        let insert_at = idx.min(sheet.rows.len());
+                        sheet.rows.insert(insert_at, row);
+                    }
+                }
+                visidata_core::undo::UndoAction::RenameColumn { col_id, old_name } => {
+                    if let Some(col) = sheet.columns.iter_mut().find(|c| c.id.0 == col_id) {
+                        col.name = old_name;
+                    }
+                }
+                visidata_core::undo::UndoAction::SetColType { col_id, old_type } => {
+                    if let Some(col) = sheet.columns.iter_mut().find(|c| c.id.0 == col_id) {
+                        col.col_type = old_type;
+                    }
+                }
+            }
+            sheet.clamp_cursor();
+            if sheet.undo_stack.is_empty() {
+                sheet.modified = false;
+            }
+            self.status = "undone".into();
+        } else {
+            self.status = "nothing to undo".into();
+        }
+    }
+
+    /// Redo the last undone action.
+    fn do_redo(&mut self) {
+        use visidata_core::undo::UndoAction;
+
+        let Some(action) = self.redo_stack.pop() else {
+            self.status = "nothing to redo".into();
+            return;
+        };
+        let Some(sheet) = self.stack.active_mut() else {
+            return;
+        };
+        // Re-apply the action forward
+        match &action {
+            UndoAction::SetCell {
+                row_idx,
+                col_source_idx,
+                ..
+            } => {
+                // We stored old_value in the redo action — we need the "new" value
+                // which we don't have. For redo we need the forward value.
+                // Since we can't reconstruct "new value" from the undo entry alone,
+                // skip for SetCell (requires a before/after pair — a future improvement).
+                let _ = (row_idx, col_source_idx);
+                self.redo_stack.push(action); // put back
+                self.status = "redo not supported for cell edits yet".into();
+                return;
+            }
+            UndoAction::BulkSetCell { .. } => {
+                self.redo_stack.push(action);
+                self.status = "redo not supported for bulk edits yet".into();
+                return;
+            }
+            UndoAction::InsertRow { row_idx } => {
+                let num_values = sheet.columns.len();
+                let idx = (*row_idx).min(sheet.rows.len());
+                sheet.rows.insert(idx, visidata_core::Row::new(vec![visidata_core::Value::Null; num_values]));
+                sheet.modified = true;
+                sheet.undo_stack.push(action);
+            }
+            UndoAction::DeleteRow { row_idx, .. } => {
+                if *row_idx < sheet.rows.len() {
+                    let row = sheet.rows.remove(*row_idx);
+                    sheet.modified = true;
+                    sheet.undo_stack.push(UndoAction::DeleteRow {
+                        row_idx: *row_idx,
+                        row,
+                    });
+                }
+            }
+            UndoAction::DeleteRows { entries } => {
+                let indices: Vec<usize> = entries.iter().map(|(i, _)| *i).collect();
+                let mut new_entries: Vec<(usize, visidata_core::Row)> = Vec::new();
+                for &idx in indices.iter().rev() {
+                    if idx < sheet.rows.len() {
+                        new_entries.push((idx, sheet.rows.remove(idx)));
+                    }
+                }
+                if !new_entries.is_empty() {
+                    sheet.modified = true;
+                    sheet.undo_stack.push(UndoAction::DeleteRows {
+                        entries: new_entries,
+                    });
+                }
+            }
+            UndoAction::RenameColumn { col_id, old_name: _ } => {
+                // We don't have the "new name" here — skip
+                let _ = col_id;
+                self.redo_stack.push(action);
+                self.status = "redo not supported for rename yet".into();
+                return;
+            }
+            UndoAction::SetColType { col_id, old_type: _ } => {
+                let _ = col_id;
+                self.redo_stack.push(action);
+                self.status = "redo not supported for type change yet".into();
+                return;
+            }
+        }
+        sheet.clamp_cursor();
+        self.status = "redone".into();
+    }
+
+    /// Execute a search in the given direction using the current scope.
     fn execute_search(&mut self, pattern: &str, forward: bool) {
         if pattern.is_empty() {
             return;
@@ -1114,11 +1979,52 @@ impl App {
         let Some(sheet) = self.stack.active_mut() else {
             return;
         };
-        let col_idx = resolve_cursor_col_idx(sheet).unwrap_or(0);
-        let result = if forward {
-            sheet.search_forward(col_idx, pattern)
+        let result = match self.last_search_scope {
+            SearchScope::CurrentCol => {
+                let col_idx = resolve_cursor_col_idx(sheet).unwrap_or(0);
+                if forward {
+                    sheet.search_forward(col_idx, pattern)
+                } else {
+                    sheet.search_backward(col_idx, pattern)
+                }
+            }
+            SearchScope::KeyCols => {
+                // Search first key column, falling back to cursor column
+                let key_idx = sheet
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .find(|(_, c)| c.is_key)
+                    .map_or_else(
+                        || resolve_cursor_col_idx(sheet).unwrap_or(0),
+                        |(i, _)| i,
+                    );
+                if forward {
+                    sheet.search_forward(key_idx, pattern)
+                } else {
+                    sheet.search_backward(key_idx, pattern)
+                }
+            }
+        };
+        if let Some(row_idx) = result {
+            sheet.cursor_row = row_idx;
         } else {
-            sheet.search_backward(col_idx, pattern)
+            self.status = format!("not found: {pattern}");
+        }
+    }
+
+    /// Execute a search across all visible columns.
+    fn execute_search_all_cols(&mut self, pattern: &str, forward: bool) {
+        if pattern.is_empty() {
+            return;
+        }
+        let Some(sheet) = self.stack.active_mut() else {
+            return;
+        };
+        let result = if forward {
+            sheet.search_forward_all_cols(pattern)
+        } else {
+            sheet.search_backward_all_cols(pattern)
         };
         if let Some(row_idx) = result {
             sheet.cursor_row = row_idx;
@@ -1335,6 +2241,36 @@ impl App {
         self.update_status();
     }
 
+    /// Reload the current sheet from its source file.
+    fn reload_current_sheet(&mut self) {
+        let source = self.stack.active().and_then(|s| s.source.clone());
+        let Some(path) = source else {
+            self.status = "no source file to reload from".into();
+            return;
+        };
+        let registry = visidata_loaders::LoaderRegistry::with_builtins();
+        match registry.load_file(&path) {
+            Ok(new_sheet) => {
+                if let Some(sheet) = self.stack.active_mut() {
+                    let name = sheet.name.clone();
+                    let cursor_row = sheet.cursor_row;
+                    let cursor_col = sheet.cursor_col;
+                    sheet.rows = new_sheet.rows;
+                    sheet.columns = new_sheet.columns;
+                    sheet.name = name;
+                    sheet.modified = false;
+                    sheet.undo_stack.clear();
+                    sheet.cursor_row = cursor_row.min(sheet.rows.len().saturating_sub(1));
+                    sheet.cursor_col = cursor_col.min(sheet.visible_columns().len().saturating_sub(1));
+                    self.status = format!("reloaded from {}", path.display());
+                }
+            }
+            Err(e) => {
+                self.status = format!("reload failed: {e}");
+            }
+        }
+    }
+
     /// Save the current sheet to its source file.
     fn save_current_sheet(&mut self) {
         let Some(sheet) = self.stack.active() else {
@@ -1388,14 +2324,42 @@ fn auto_fit_column(sheet: &mut Sheet) {
     sheet.columns[idx].width = Some(width);
 }
 
-/// Set the column type for the current cursor column.
+/// Auto-fit all visible columns.
+fn resize_all_columns(sheet: &mut Sheet) {
+    use unicode_width::UnicodeWidthStr;
+
+    let vis_ids: Vec<_> = sheet
+        .visible_columns()
+        .iter()
+        .map(|c| c.id)
+        .collect();
+
+    for col_id in vis_ids {
+        let Some(idx) = sheet.columns.iter().position(|c| c.id == col_id) else {
+            continue;
+        };
+        let header_w = UnicodeWidthStr::width(sheet.columns[idx].name.as_str());
+        let max_data_w = sheet
+            .rows
+            .iter()
+            .map(|row| {
+                let display = sheet.columns[idx].display_value(row);
+                crate::cliptext::dispwidth(&display)
+            })
+            .max()
+            .unwrap_or(0);
+        let width = header_w.max(max_data_w).min(80);
+        #[expect(clippy::cast_possible_truncation, reason = "width clamped to 80")]
+        let width = width as u16;
+        sheet.columns[idx].width = Some(width);
+    }
+}
+
+/// Set the column type for the current cursor column, with undo tracking.
 fn set_cursor_col_type(sheet: &mut Sheet, col_type: ColumnType) {
     let vis = sheet.visible_columns();
     if let Some(&col) = vis.get(sheet.cursor_col) {
-        let col_idx = sheet.columns.iter().position(|c| c.id == col.id);
-        if let Some(idx) = col_idx {
-            sheet.columns[idx].col_type = col_type;
-        }
+        sheet.set_col_type(col.id.0, col_type);
     }
 }
 

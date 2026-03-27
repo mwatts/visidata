@@ -178,122 +178,55 @@ impl OptionsManager {
 #[must_use]
 pub fn builtin_options() -> OptionsManager {
     let mut opts = OptionsManager::new();
-
-    // Display
-    opts.declare(
-        "disp_date_fmt",
-        Value::Text("%Y-%m-%d".into()),
-        "default date format",
-    );
-    opts.declare(
-        "disp_float_fmt",
-        Value::Text("%.02f".into()),
-        "default float format",
-    );
-    opts.declare(
-        "disp_int_fmt",
-        Value::Text("%d".into()),
-        "default int format",
-    );
-    opts.declare(
-        "disp_note_none",
-        Value::Text("⌀".into()),
-        "note for null values",
-    );
-    opts.declare(
-        "disp_truncator",
-        Value::Text("…".into()),
-        "truncation indicator",
-    );
-    opts.declare(
-        "disp_oddspace",
-        Value::Text("·".into()),
-        "character for odd whitespace",
-    );
-    opts.declare(
-        "disp_column_sep",
-        Value::Text("│".into()),
-        "column separator",
-    );
-
-    // Column widths
-    opts.declare("default_width", Value::Int(20), "default column width");
-    opts.declare("min_col_width", Value::Int(3), "minimum column width");
-    opts.declare(
-        "max_col_width",
-        Value::Int(80),
-        "maximum column width for auto-fit",
-    );
-
-    // Behavior
-    opts.declare("encoding", Value::Text("utf-8".into()), "file encoding");
-    opts.declare(
-        "encoding_errors",
-        Value::Text("surrogateescape".into()),
-        "encoding error handler",
-    );
-    opts.declare(
-        "bulk_select_clear",
-        Value::Bool(false),
-        "clear selection before bulk select",
-    );
-    opts.declare("wrap", Value::Bool(false), "wrap cell text in display");
-    opts.declare(
-        "quitguard",
-        Value::Bool(false),
-        "confirm before quitting modified sheet",
-    );
-    opts.declare(
-        "null_value",
-        Value::Text(String::new()),
-        "string to treat as null on load",
-    );
-
-    // CSV/TSV
-    opts.declare(
-        "csv_delimiter",
-        Value::Text(",".into()),
-        "CSV field delimiter",
-    );
-    opts.declare(
-        "csv_quotechar",
-        Value::Text("\"".into()),
-        "CSV quote character",
-    );
-    opts.declare(
-        "tsv_safe_newline",
-        Value::Text("\\n".into()),
-        "TSV newline escape",
-    );
-
-    // Color
-    opts.declare(
-        "color_default",
-        Value::Text("normal".into()),
-        "default color",
-    );
-    opts.declare(
-        "color_key_col",
-        Value::Text("bold".into()),
-        "color for key columns",
-    );
-    opts.declare(
-        "color_selected_row",
-        Value::Text("cyan".into()),
-        "color for selected rows",
-    );
-    opts.declare(
-        "color_cursor_row",
-        Value::Text("reverse".into()),
-        "color for cursor row",
-    );
-    opts.declare(
-        "color_header",
-        Value::Text("bold underline".into()),
-        "color for header row",
-    );
-
+    declare_display_options(&mut opts);
+    declare_behavior_options(&mut opts);
+    declare_color_options(&mut opts);
     opts
+}
+
+fn declare_display_options(opts: &mut OptionsManager) {
+    for (name, val, help) in [
+        ("disp_date_fmt", Value::Text("%Y-%m-%d".into()), "default date format"),
+        ("disp_float_fmt", Value::Text("%.02f".into()), "default float format"),
+        ("disp_int_fmt", Value::Text("%d".into()), "default int format"),
+        ("disp_note_none", Value::Text("⌀".into()), "note for null values"),
+        ("disp_truncator", Value::Text("…".into()), "truncation indicator"),
+        ("disp_oddspace", Value::Text("·".into()), "character for odd whitespace"),
+        ("disp_column_sep", Value::Text("│".into()), "column separator"),
+        ("default_width", Value::Int(20), "default column width"),
+        ("min_col_width", Value::Int(3), "minimum column width"),
+        ("max_col_width", Value::Int(80), "maximum column width for auto-fit"),
+    ] {
+        opts.declare(name, val, help);
+    }
+}
+
+fn declare_behavior_options(opts: &mut OptionsManager) {
+    for (name, val, help) in [
+        ("encoding", Value::Text("utf-8".into()), "file encoding"),
+        ("encoding_errors", Value::Text("surrogateescape".into()), "encoding error handler"),
+        ("bulk_select_clear", Value::Bool(false), "clear selection before bulk select"),
+        ("wrap", Value::Bool(false), "wrap cell text in display"),
+        ("quitguard", Value::Bool(false), "confirm before quitting modified sheet"),
+        ("null_value", Value::Text(String::new()), "string to treat as null on load"),
+        ("csv_delimiter", Value::Text(",".into()), "CSV field delimiter"),
+        ("csv_quotechar", Value::Text("\"".into()), "CSV quote character"),
+        ("tsv_safe_newline", Value::Text("\\n".into()), "TSV newline escape"),
+    ] {
+        opts.declare(name, val, help);
+    }
+}
+
+fn declare_color_options(opts: &mut OptionsManager) {
+    for (name, val, help) in [
+        ("color_default", Value::Text("normal".into()), "default color"),
+        ("color_key_col", Value::Text("bold".into()), "color for key columns"),
+        ("color_selected_row", Value::Text("cyan".into()), "color for selected rows"),
+        ("color_cursor_row", Value::Text("reverse".into()), "color for cursor row"),
+        ("color_header", Value::Text("bold underline".into()), "color for header row"),
+    ] {
+        opts.declare(name, val, help);
+    }
 }
 
 /// Build a sheet displaying all options and their current values.
