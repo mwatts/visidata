@@ -12,8 +12,11 @@ use ratatui::DefaultTerminal;
 use ratatui::prelude::*;
 
 use visidata_core::{
-    ColumnType, CommandRegistry, Sheet, SheetStack, SortDirection, async_loader::LoadHandle,
-    builtin_commands, options::OptionsManager,
+    ColumnType, CommandRegistry, Sheet, SheetStack, SortDirection,
+    async_loader::LoadHandle,
+    builtin_commands,
+    menu::{MenuBar, MenuItem, MenuState, builtin_menu_bar},
+    options::OptionsManager,
 };
 
 use crate::input::{EditResult, LineEditor};
@@ -35,6 +38,8 @@ enum InputMode {
     SearchBackward(LineEditor),
     /// Command palette (fuzzy search by longname).
     CommandPalette(LineEditor),
+    /// Menu navigation mode.
+    Menu,
 }
 
 /// Application state for the TUI.
@@ -69,6 +74,12 @@ pub struct App {
 
     /// Active background loading handle, if any.
     load_handle: Option<LoadHandle>,
+
+    /// Menu bar.
+    pub menu_bar: MenuBar,
+
+    /// Menu navigation state.
+    menu_state: MenuState,
 }
 
 impl App {
@@ -88,6 +99,8 @@ impl App {
             options: visidata_core::options::builtin_options(),
             theme: Theme::default(),
             load_handle: None,
+            menu_bar: builtin_menu_bar(),
+            menu_state: MenuState::new(),
         }
     }
 
@@ -133,6 +146,7 @@ impl App {
             {
                 match &self.mode {
                     InputMode::Normal => self.handle_normal_key(key),
+                    InputMode::Menu => self.handle_menu_key(key),
                     InputMode::RenameColumn(_)
                     | InputMode::EditCell(_)
                     | InputMode::SearchForward(_)
@@ -216,6 +230,50 @@ impl App {
                     let matches = self.commands.search_commands(&query);
                     let hint = matches.first().map_or("", |c| c.longname.as_str());
                     Some(format!("command: {query}  → {hint}"))
+                }
+                InputMode::Menu => {
+                    let menu_labels: Vec<&str> = self
+                        .menu_bar
+                        .menus
+                        .iter()
+                        .map(visidata_core::menu::MenuItem::label)
+                        .collect();
+                    let selected = self.menu_state.menu_idx;
+                    let bar_text: String = menu_labels
+                        .iter()
+                        .enumerate()
+                        .map(|(i, label)| {
+                            if i == selected {
+                                format!("[{label}]")
+                            } else {
+                                (*label).to_owned()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("  ");
+
+                    // Show items of selected menu.
+                    let items_text = if let Some(MenuItem::Submenu { items, .. }) =
+                        self.menu_bar.menus.get(selected)
+                    {
+                        let item_idx = self.menu_state.item_idx;
+                        items
+                            .iter()
+                            .enumerate()
+                            .map(|(i, item)| {
+                                if i == item_idx {
+                                    format!("> {}", item.label())
+                                } else {
+                                    format!("  {}", item.label())
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" | ")
+                    } else {
+                        String::new()
+                    };
+
+                    Some(format!("{bar_text}\n{items_text}"))
                 }
             };
             renderer::draw_sheet(
@@ -475,6 +533,17 @@ impl App {
                 self.stack.push(index);
             }
 
+            // --- Menu ---
+            KeyCode::F(10) => {
+                self.menu_state.toggle();
+                if self.menu_state.open {
+                    self.mode = InputMode::Menu;
+                } else {
+                    self.mode = InputMode::Normal;
+                }
+                return;
+            }
+
             // --- Help & Command palette ---
             KeyCode::Char(':' | ' ') => {
                 self.mode = InputMode::CommandPalette(LineEditor::new(""));
@@ -582,7 +651,7 @@ impl App {
                     self.mode = InputMode::CommandPalette(editor);
                 }
             },
-            InputMode::Normal => unreachable!(),
+            InputMode::Normal | InputMode::Menu => unreachable!(),
         }
 
         self.update_status();
@@ -856,6 +925,57 @@ impl App {
                 sel_text,
             );
         }
+    }
+
+    /// Handle a key event while in menu mode.
+    fn handle_menu_key(&mut self, key: KeyEvent) {
+        let num_menus = self.menu_bar.menus.len();
+        let num_items = self
+            .menu_bar
+            .menus
+            .get(self.menu_state.menu_idx)
+            .map_or(0, |m| match m {
+                MenuItem::Submenu { items, .. } => items.len(),
+                _ => 0,
+            });
+
+        match key.code {
+            KeyCode::Esc | KeyCode::F(10) => {
+                self.menu_state.open = false;
+                self.mode = InputMode::Normal;
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.menu_state.prev_menu(num_menus);
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.menu_state.next_menu(num_menus);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.menu_state.prev_item(num_items);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.menu_state.next_item(num_items);
+            }
+            KeyCode::Enter => {
+                // Execute the selected menu item.
+                let menu_idx = self.menu_state.menu_idx;
+                let item_idx = self.menu_state.item_idx;
+                if let Some(MenuItem::Submenu { items, .. }) = self.menu_bar.menus.get(menu_idx)
+                    && let Some(MenuItem::Command { longname, .. }) = items.get(item_idx)
+                {
+                    let longname = longname.clone();
+                    self.menu_state.open = false;
+                    self.mode = InputMode::Normal;
+                    self.dispatch_command(&longname);
+                    self.update_status();
+                    return;
+                }
+                self.menu_state.open = false;
+                self.mode = InputMode::Normal;
+            }
+            _ => {}
+        }
+        self.update_status();
     }
 
     /// Join the top two sheets on the stack by key columns (inner join).
