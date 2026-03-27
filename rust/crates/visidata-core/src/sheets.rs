@@ -779,6 +779,201 @@ pub fn add_incr_column(source: &mut Sheet, start: i64, step: i64) {
     ));
 }
 
+/// Add one column per capture group for a regex applied to `col_idx`.
+///
+/// Returns the number of columns added, or an error if the regex is invalid.
+///
+/// # Errors
+/// Returns an error string if `pattern` is not a valid regex.
+pub fn capture_columns(source: &mut Sheet, col_idx: usize, pattern: &str) -> Result<usize, String> {
+    let re = regex::Regex::new(pattern).map_err(|e| e.to_string())?;
+    let n_caps = re.captures_len().saturating_sub(1);
+    if n_caps == 0 {
+        return Ok(0);
+    }
+    let Some(col) = source.columns.get(col_idx) else {
+        return Ok(0);
+    };
+    let col_name = col.name.clone();
+    let base_source = source.columns.iter().map(|c| c.source_idx).max().unwrap_or(0) + 1;
+
+    // Materialise capture values
+    let mut cap_vals: Vec<Vec<Value>> = vec![Vec::new(); n_caps];
+    for row in &source.rows {
+        let text = source.columns[col_idx].display_value(row);
+        let caps = re.captures(&text);
+        for (g, vals) in cap_vals.iter_mut().enumerate().take(n_caps) {
+            let v = caps.as_ref()
+                .and_then(|c| c.get(g + 1))
+                .map_or(Value::Null, |m| Value::Text(m.as_str().to_owned()));
+            vals.push(v);
+        }
+    }
+
+    for (g, vals) in cap_vals.iter().enumerate() {
+        let new_si = base_source + g;
+        let col_id = ColumnId(source.columns.len());
+        source.columns.push(Column::new(col_id, format!("{col_name}_{}", g + 1), new_si));
+        for (i, row) in source.rows.iter_mut().enumerate() {
+            row.set(new_si, vals[i].clone());
+        }
+    }
+    Ok(n_caps)
+}
+
+/// Add a column with a regex substitution applied to `col_idx`.
+///
+/// `pattern_repl` should be `"pattern/replacement"`.
+///
+/// # Errors
+/// Returns an error if `pattern` or `pattern_repl` format is invalid.
+pub fn subst_column(source: &mut Sheet, col_idx: usize, pattern_repl: &str) -> Result<(), String> {
+    let (pattern, replacement) = pattern_repl.split_once('/').unwrap_or((pattern_repl, ""));
+    let re = regex::Regex::new(pattern).map_err(|e| e.to_string())?;
+    let Some(col) = source.columns.get(col_idx) else {
+        return Ok(());
+    };
+    let col_name = format!("{}_subst", col.name);
+    let new_si = source.columns.iter().map(|c| c.source_idx).max().unwrap_or(0) + 1;
+    let col_id = ColumnId(source.columns.len());
+
+    let vals: Vec<Value> = source.rows.iter()
+        .map(|row| {
+            let text = source.columns[col_idx].display_value(row);
+            Value::Text(re.replace_all(&text, replacement).into_owned())
+        })
+        .collect();
+
+    source.columns.push(Column::new(col_id, col_name, new_si));
+    for (i, row) in source.rows.iter_mut().enumerate() {
+        row.set(new_si, vals[i].clone());
+    }
+    Ok(())
+}
+
+/// Melt a sheet with an optional column-name capture regex.
+///
+/// If `col_name_regex` is non-empty, its capture groups become extra columns
+/// alongside "variable" and "value".
+///
+/// # Errors
+/// Returns an error if `col_name_regex` is invalid.
+pub fn melt_sheet_regex(source: &Sheet, col_name_regex: &str) -> Result<Sheet, String> {
+    if col_name_regex.is_empty() {
+        return Ok(melt_sheet(source));
+    }
+    let re = regex::Regex::new(col_name_regex).map_err(|e| e.to_string())?;
+    let n_caps = re.captures_len().saturating_sub(1);
+
+    let key_indices = key_column_indices(source);
+    let value_indices: Vec<usize> = (0..source.columns.len())
+        .filter(|i| !source.columns[*i].is_key)
+        .collect();
+
+    let mut out_cols: Vec<Column> = Vec::new();
+    let mut col_id = 0usize;
+    for &ki in &key_indices {
+        let mut col = Column::new(ColumnId(col_id), &source.columns[ki].name, col_id);
+        col.is_key = true;
+        out_cols.push(col);
+        col_id += 1;
+    }
+    for g in 0..n_caps {
+        out_cols.push(Column::new(ColumnId(col_id), format!("group{}", g + 1), col_id));
+        col_id += 1;
+    }
+    out_cols.push(Column::new(ColumnId(col_id), "variable", col_id));
+    col_id += 1;
+    out_cols.push(Column::new(ColumnId(col_id), "value", col_id));
+
+    let mut out_rows: Vec<Row> = Vec::new();
+    for row in &source.rows {
+        let key_vals: Vec<Value> = key_indices.iter()
+            .map(|&ki| row.get(source.columns[ki].source_idx).clone())
+            .collect();
+        for &vi in &value_indices {
+            let col_name = &source.columns[vi].name;
+            let caps = re.captures(col_name);
+            let mut vals = key_vals.clone();
+            for g in 0..n_caps {
+                vals.push(caps.as_ref()
+                    .and_then(|c| c.get(g + 1))
+                    .map_or(Value::Null, |m| Value::Text(m.as_str().to_owned())));
+            }
+            vals.push(Value::Text(col_name.clone()));
+            vals.push(row.get(source.columns[vi].source_idx).clone());
+            out_rows.push(Row::new(vals));
+        }
+    }
+    Ok(Sheet::with_data(format!("{}_melted", source.name), out_cols, out_rows))
+}
+
+/// Expand a JSON-string column into one new column per discovered key.
+///
+/// Only adds columns for keys that appear in at least one row.
+pub fn expand_json_col(source: &mut Sheet, col_idx: usize) {
+    let Some(col) = source.columns.get(col_idx) else { return; };
+    let col_name = col.name.clone();
+
+    // Discover all keys across all rows
+    let mut all_keys: Vec<String> = Vec::new();
+    let mut parsed: Vec<Option<serde_json::Map<String, serde_json::Value>>> = Vec::new();
+    for row in &source.rows {
+        let text = col.display_value(row);
+        let obj: Option<serde_json::Map<String, serde_json::Value>> =
+            serde_json::from_str(&text).ok().and_then(|v: serde_json::Value| {
+                if let serde_json::Value::Object(m) = v { Some(m) } else { None }
+            });
+        if let Some(ref m) = obj {
+            for k in m.keys() {
+                if !all_keys.contains(k) {
+                    all_keys.push(k.clone());
+                }
+            }
+        }
+        parsed.push(obj);
+    }
+
+    if all_keys.is_empty() { return; }
+
+    let base_si = source.columns.iter().map(|c| c.source_idx).max().unwrap_or(0) + 1;
+
+    for (ki, key) in all_keys.iter().enumerate() {
+        let new_si = base_si + ki;
+        let new_col_id = ColumnId(source.columns.len());
+        // Tag as expanded-from this col by prefixing name
+        source.columns.push(Column::new(new_col_id, format!("{col_name}.{key}"), new_si));
+        for (ri, row) in source.rows.iter_mut().enumerate() {
+            let val = parsed[ri].as_ref()
+                .and_then(|m| m.get(key))
+                .map_or(Value::Null, json_to_value);
+            row.set(new_si, val);
+        }
+    }
+}
+
+/// Remove columns that were expanded from a JSON column (by name prefix).
+pub fn contract_json_col(source: &mut Sheet, col_idx: usize) {
+    let prefix = source.columns.get(col_idx)
+        .map(|c| format!("{}.", c.name))
+        .unwrap_or_default();
+    if prefix == "." { return; }
+    source.columns.retain(|c| !c.name.starts_with(&prefix));
+    source.clamp_cursor();
+}
+
+fn json_to_value(v: &serde_json::Value) -> Value {
+    match v {
+        serde_json::Value::Null => Value::Null,
+        serde_json::Value::Bool(b) => Value::Bool(*b),
+        serde_json::Value::Number(n) => {
+            n.as_i64().map_or_else(|| Value::Float(n.as_f64().unwrap_or(0.0)), Value::Int)
+        }
+        serde_json::Value::String(s) => Value::Text(s.clone()),
+        other => Value::Text(other.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

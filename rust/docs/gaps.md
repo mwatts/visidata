@@ -50,56 +50,56 @@ Each entry has:
 
 ### GAP-035 — Toggle multiline display (`v`)
 **Python**: `features/layout.py` — `toggle-multiline` toggles whether long cells wrap to multiple rows.
-**Rust now**: Missing. All cells are single-line.
+**Rust now**: ⚠️ Partial — field declared but renderer still single-line
 **Instructions**: Add `multiline: bool` to `Sheet`. When true, renderer wraps cell content to `col.width` characters. This requires multi-row rendering logic in `draw_table`. Bind `v`. Low-priority for initial implementation; declare the field and option now.
 
 ---
 
 ### GAP-038 — Add regex-split column (`:`)
 **Python**: `features/regex.py` — `addcol-split` prompts for a delimiter regex, adds a new column whose value is the Nth split segment.
-**Rust now**: `split:<pattern>` in command palette exists but mutates in place (splits into multiple columns). Python's `:` adds a single new derived column.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Add new `InputMode` or palette prefix `split:`. Create a `SplitColumn` (stores source col index, regex, segment index). For initial port, adding the first segment as a new column is sufficient. Bind `:`.
 
 ---
 
 ### GAP-039 — Add regex-capture column (`;`)
 **Python**: `features/regex.py` — `addcol-capture` adds one column per capture group in the regex.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Prompt for regex with capture groups. For each capture group, add a new column that evaluates the Nth capture of the source column's value. Bind `;`.
 
 ---
 
 ### GAP-040 — Add regex-substitution column (`*`)
 **Python**: `features/regex.py` — `addcol-regex-subst` adds a column with a regex substitution applied.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Prompt for `pattern/replacement`. Add column that applies `Regex::replace` to source column value. Bind `*`.
 
 ---
 
 ### GAP-041 — Expand JSON column (`(`)
 **Python**: `features/expand_cols.py` — `expand-col` adds new columns for each key in a JSON-valued column.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: If cursor column contains JSON strings (`Value::Text` parseable as object), add a new column per discovered key. Bind `(`.
 
 ---
 
 ### GAP-042 — Contract expanded column (`)`)
 **Python**: `features/expand_cols.py` — `contract-col` removes the expanded columns.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Track expanded-from parent column ID; remove child columns by that tag. Bind `)`.
 
 ---
 
 ### GAP-044 — Add empty editable column (`za`)
 **Python**: `modify.py` — `addcol-new` adds an empty column the user can populate via `e`/`ge`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Append `Column::new(ColumnId(next_id), "new_col", new_source_idx)` to `sheet.columns`. Extend each row's `values` with `Value::Null`. Bind `za`.
 
 ---
 
 ### GAP-047 — Column type: `anytype` / `vlen`
 **Python**: Supports `anytype` (passthrough), `vlen` (length of container).
-**Rust now**: No `anytype` or `vlen` variants in `ColumnType`.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Add `ColumnType::Any` (no coercion, display raw) and `ColumnType::Len` (display `Value::len()` for text/bytes). Add `z~` for Any and `z#` for Len.
 
 ---
@@ -117,7 +117,7 @@ Each entry has:
 
 ### GAP-055 — Open cell in external editor (`Ctrl+O`)
 **Python**: `features/sysedit.py` — `sysedit-cell` writes cell to a temp file, opens `$EDITOR`, reads back.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Write `cell_value_string` to `NamedTempFile`, spawn `$EDITOR` (or `$VISUAL`) via `std::process::Command`, wait, read file back, parse through column type, set cell. Bind `Ctrl+O`. Mark as platform-dependent.
 
 ---
@@ -128,21 +128,21 @@ Each entry has:
 
 ### GAP-061 — Copy cell to system clipboard (`zY`)
 **Python**: `clipboard.py` — `syscopy-cell` uses `xclip`/`pbcopy`/`clip.exe`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Detect platform; pipe cell display string to `pbcopy` (macOS) / `xclip -selection clipboard` (Linux) / `clip` (Windows) via `Command`. Bind `zY`. Fail gracefully if tool not found.
 
 ---
 
 ### GAP-062 — Copy row / selected rows to system clipboard (`Y`, `gY`)
 **Python**: `clipboard.py` — `syscopy-row`, `syscopy-selected` write TSV to system clipboard.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Format row(s) as TSV string (reuse CSV writer logic with `\t` delimiter), pipe to system clipboard tool. Bind `Y`/`gY`.
 
 ---
 
 ### GAP-063 — Paste from system clipboard (`gzP`)
 **Python**: `clipboard.py` — `syspaste-cells` reads TSV from system clipboard and pastes at cursor.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Read from `pbpaste` / `xclip -o` / `Get-Clipboard`. Parse as TSV. Apply values cell-by-cell from `cursor_row`, `cursor_col`. Bind `gzP`.
 
 ---
@@ -164,7 +164,7 @@ Each entry has:
 
 ### GAP-072 — Sort by key columns additive (`gz[`, `gz]`)
 **Python**: `sort.py` — `sort-keys-asc-add`, `sort-keys-desc-add`.
-**Rust now**: ⚠️ Partial (commit: feat/rust session 2) — gz[ and gz] not explicitly wired but framework supports it.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Combine GAP-068 logic with additive push. Bind `gz[`/`gz]`.
 
 ---
@@ -244,14 +244,14 @@ Each entry has:
 
 ### GAP-090 — Macro sheet (`gm`)
 **Python**: `macros.py` — `macro-sheet` opens a list of all saved macros.
-**Rust now**: Only `Q` toggle record / replay via palette. No browsable macro list.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Add `macros_sheet(macro_store: &MacroStore) -> Sheet` showing macro name, keystroke count, preview. Bind `gm`.
 
 ---
 
 ### GAP-091 — Command log save / replay (`Ctrl+D`)
 **Python**: `cmdlog.py` — `save-cmdlog` saves the session's command history as a `.vdj` file for later replay.
-**Rust now**: Missing. No command log is maintained.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Maintain `self.command_log: Vec<(String, String)>` (longname, key) in `App`. `Ctrl+D` saves as JSON array to a `.vdj` file. Replay would read the file and replay each command. Initial implementation: just save, no replay.
 
 ---
@@ -262,21 +262,21 @@ Each entry has:
 
 ### GAP-092 — Left / Right / Outer joins not bound
 **Python**: `features/join.py` — join type is chosen interactively from a palette showing all join types.
-**Rust now**: `join_sheets()` supports `Inner`, `Left`, `Right`, `Outer` but `&` always uses `Inner`.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: When `&` is pressed, open `InputMode::CommandPalette` pre-filled with join type options, or a dedicated `InputMode::JoinType`. On selection, call `join_sheets(left, right, selected_type)` and push result.
 
 ---
 
 ### GAP-093 — Join more than two sheets
 **Python**: `features/join.py` — can join all selected sheets in one operation.
-**Rust now**: `join_top_two_sheets()` only joins the top two.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Add `join_selected_sheets()` that collects sheets where `sheet.rows` are marked selected (or from the sheets-sheet). Cascade-join them. Bind `g&`.
 
 ---
 
 ### GAP-094 — Concat sheets key binding
 **Python**: Concat / append join type.
-**Rust now**: `concat_sheets` is implemented in `sheets.rs` and registered in `builtin_commands` but has no key binding and is palette-only.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Bind `g&` (after GAP-093) or a dedicated key such as `gA` for concatenate.
 
 ---
@@ -290,14 +290,14 @@ Each entry has:
 
 ### GAP-096 — Melt with regex column name parsing (`gM`)
 **Python**: `features/melt.py` — `melt-regex` allows a capture regex to split column names into multiple variable columns (e.g., `sales_2023` → variable `sales`, period `2023`).
-**Rust now**: `M` (basic melt) exists; `gM` missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Extend `melt_sheet` to accept an optional `col_name_regex`. When provided, each variable row gets additional columns from the capture groups. Bind `gM`.
 
 ---
 
 ### GAP-097 — Save all sheets (`gCtrl+S`)
 **Python**: `save.py` — `save-all` saves every sheet in the stack to a zip or a directory.
-**Rust now**: Only single-sheet `Ctrl+S` exists.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: In `dispatch_command("save-all")`, iterate `self.stack`, call `save_sheet` for each that has a `source` path. Bind `gCtrl+S`.
 
 ---
@@ -322,7 +322,7 @@ Each entry has:
 
 ### GAP-100 — Additional aggregators: median, mode, stdev, distinct, count, percentiles
 **Python**: `aggregators.py` — full set: min, max, avg/mean, median, mode, sum, distinct, count, list, stdev, q3/q4/q5/q10, p10–p99.
-**Rust now**: Only count, sum, avg, min, max in `aggregation.rs`.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Add to `AggFunc` enum and `AggFunc::compute()`:
   - `Median` — sort values, take middle (or average of two middles)
   - `Mode` — most-frequent value
@@ -403,7 +403,7 @@ Each entry has:
 
 ### GAP-111 — Cancellation of async loads
 **Python**: `Ctrl+C` cancels the current sheet's background threads.
-**Rust now**: `LoadHandle.cancel` is an `Arc<AtomicBool>` but `Ctrl+C` is wired to unconditional `self.running = false`.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Change `Ctrl+C` to first check if a load is in progress (`self.load_handle.is_some()`). If so, call `handle.cancel()` and set status `"load cancelled"`. Only quit the app if no load is active (or on second `Ctrl+C`).
 
 ---
@@ -446,7 +446,7 @@ Each entry has:
 
 ### GAP-122 — Runtime theme switching
 **Python**: Options `color_*` can be changed at runtime and take effect immediately.
-**Rust now**: `Theme` is hardcoded to `Theme::default()` in `App::new`. Three themes defined but none switchable.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: Read a `theme` option (`"default"`, `"dark"`, `"light"`) in `App`. On each render, call `Theme::by_name(options.get("theme"))`. When the user edits the theme option, the next render picks it up.
 
 ---
@@ -460,7 +460,7 @@ Each entry has:
 
 ### GAP-124 — Column header shows hidden-column indicators
 **Python**: When columns are hidden between visible ones, a narrow indicator column shows `…` or the count of hidden columns.
-**Rust now**: Hidden columns (`width = Some(0)`) are simply skipped; no indicator is shown.
+**Rust now**: ✅ Implemented (commit: feat/rust session 3)
 **Instructions**: In `draw_table`, when iterating visible columns, detect gaps between column indices (hidden columns in between) and render a narrow `…` divider cell.
 
 ---

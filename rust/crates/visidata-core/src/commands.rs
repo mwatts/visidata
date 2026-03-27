@@ -220,6 +220,14 @@ pub fn builtin_commands() -> CommandRegistry {
     reg.add("z^", "rename-col-selected", "rename column from first selected row value");
     reg.add("g^", "rename-cols-row", "rename all columns from current row values");
     reg.add("ge", "setcol-input", "set selected rows' current column to value");
+    reg.add("za", "addcol-new", "add empty editable column");
+    reg.add("z~", "type-any", "set column type to anytype (no coercion)");
+    reg.add("z#", "type-len", "set column type to len (display length)");
+    reg.add(":", "addcol-split", "add split column (regex delimiter)");
+    reg.add(";", "addcol-capture", "add capture-group columns from regex");
+    reg.add("*", "addcol-subst", "add regex-substitution column");
+    reg.add("(", "expand-col", "expand JSON column into per-key columns");
+    reg.add(")", "contract-col", "contract expanded JSON columns");
     reg.add("H", "slide-left", "move current column one position left");
     reg.add("L", "slide-right", "move current column one position right");
     reg.add("gH", "slide-leftmost", "move current column to leftmost position");
@@ -343,6 +351,24 @@ pub fn builtin_commands() -> CommandRegistry {
 
     // Save
     reg.add("", "save-sheet", "save sheet to source file (Ctrl+S)");
+    reg.add("", "save-all", "save all sheets with source paths (gCtrl+S)");
+    reg.add("", "save-cmdlog", "save command log to .vdj file (Ctrl+D)");
+    reg.add("", "sysedit-cell", "edit current cell in $EDITOR (Ctrl+O)");
+    reg.add("zY", "syscopy-cell", "copy cell to system clipboard");
+    reg.add("Y", "syscopy-row", "copy row to system clipboard");
+    reg.add("gY", "syscopy-selected", "copy selected rows to system clipboard");
+    reg.add("gzP", "syspaste-cells", "paste from system clipboard");
+    reg.add("", "open-config", "open config file as text sheet (gO)");
+    reg.add("gS", "sheets-all", "show all sheets opened in session");
+    reg.add("gm", "macro-sheet", "show all recorded macros");
+    reg.add("g&", "join-sheets-all", "join all sheets in stack");
+    reg.add("gA", "concat-sheets", "concatenate all sheets");
+    reg.add("gM", "melt-regex", "melt sheet with column-name regex");
+    reg.add("gz[", "sort-keys-asc-add", "add key columns to ascending sort");
+    reg.add("gz]", "sort-keys-desc-add", "add key columns to descending sort");
+    reg.add("addcol-new", "addcol-new", "add empty editable column");
+    reg.add("", "expand-col", "expand JSON column");
+    reg.add("", "contract-col", "contract expanded JSON columns");
 
     // Help
     reg.add("", "help-commands", "show all commands");

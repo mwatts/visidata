@@ -27,6 +27,55 @@ use crate::input::{EditResult, LineEditor};
 use crate::renderer;
 use crate::theme::Theme;
 
+/// System clipboard operation mode.
+#[derive(Debug, Clone, Copy)]
+enum SysClipMode {
+    Cell,
+    Row,
+    Selected,
+}
+
+/// Write text to the OS clipboard via pbcopy / xclip / clip.
+fn sys_clipboard_write(text: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    #[cfg(target_os = "macos")]
+    let cmd = "pbcopy";
+    #[cfg(target_os = "linux")]
+    let cmd = "xclip";
+    #[cfg(target_os = "windows")]
+    let cmd = "clip";
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    return Err(anyhow::anyhow!("unsupported platform for clipboard"));
+
+    let mut child = std::process::Command::new(cmd)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("{cmd} not found: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(text.as_bytes())?;
+    }
+    child.wait()?;
+    Ok(())
+}
+
+/// Read text from the OS clipboard via pbpaste / xclip / powershell.
+fn sys_clipboard_read() -> anyhow::Result<String> {
+    #[cfg(target_os = "macos")]
+    let (cmd, args): (&str, &[&str]) = ("pbpaste", &[]);
+    #[cfg(target_os = "linux")]
+    let (cmd, args): (&str, &[&str]) = ("xclip", &["-selection", "clipboard", "-o"]);
+    #[cfg(target_os = "windows")]
+    let (cmd, args): (&str, &[&str]) = ("powershell", &["-command", "Get-Clipboard"]);
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    return Err(anyhow::anyhow!("unsupported platform for clipboard"));
+
+    let out = std::process::Command::new(cmd)
+        .args(args)
+        .output()
+        .map_err(|e| anyhow::anyhow!("{cmd} not found: {e}"))?;
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 /// Which columns a search targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum SearchScope {
@@ -146,6 +195,12 @@ pub struct App {
 
     /// Whether quitguard is waiting for a second `q` press.
     pending_quit: bool,
+
+    /// All sheets ever pushed in this session (names, for gS).
+    all_sheet_names: Vec<String>,
+
+    /// Command log: (longname, key-string) pairs for Ctrl+D save.
+    command_log: Vec<(String, String)>,
 }
 
 impl App {
@@ -177,6 +232,8 @@ impl App {
             prev_sheet_idx: None,
             last_errors: std::collections::VecDeque::new(),
             pending_quit: false,
+            all_sheet_names: Vec::new(),
+            command_log: Vec::new(),
         }
     }
 
@@ -312,7 +369,12 @@ impl App {
     }
 
     /// Draw the current state to the terminal frame.
-    fn draw(&self, frame: &mut Frame<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>) {
+        // Sync theme from options each frame (GAP-122)
+        if let visidata_core::Value::Text(ref name) = self.options.get_global("theme") {
+            let name = name.clone();
+            self.theme = Theme::by_name(&name);
+        }
         let area = frame.area();
 
         if let Some(sheet) = self.stack.active() {
@@ -394,8 +456,15 @@ impl App {
         reason = "single match dispatch — splitting would reduce readability"
     )]
     fn handle_normal_key(&mut self, key: KeyEvent) {
-        // Ctrl-C always quits
+        // Ctrl-C: cancel active load first, quit on second press (GAP-111)
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            if self.load_handle.is_some() {
+                if let Some(handle) = self.load_handle.take() {
+                    handle.cancel();
+                }
+                self.status = "load cancelled".into();
+                return;
+            }
             self.running = false;
             return;
         }
@@ -422,6 +491,27 @@ impl App {
         // Ctrl+R = reload sheet
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
             self.dispatch_command("reload-sheet");
+            return;
+        }
+
+        // Ctrl+S with g-prefix pending = save all sheets (GAP-097)
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s')
+            && self.pending_prefix == Some("g".into())
+        {
+            self.pending_prefix = None;
+            self.dispatch_command("save-all");
+            return;
+        }
+
+        // Ctrl+D = save command log (GAP-091)
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('d') {
+            self.dispatch_command("save-cmdlog");
+            return;
+        }
+
+        // Ctrl+O = open cell in external editor (GAP-055)
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('o') {
+            self.dispatch_command("sysedit-cell");
             return;
         }
 
@@ -473,6 +563,34 @@ impl App {
                         s.top_row = 0;
                     }
                     self.update_status();
+                    return;
+                }
+                ("g", KeyCode::Char('A')) => {
+                    self.dispatch_command("concat-sheets");
+                    return;
+                }
+                ("g", KeyCode::Char('O')) => {
+                    self.dispatch_command("open-config");
+                    return;
+                }
+                ("g", KeyCode::Char('S')) => {
+                    self.dispatch_command("sheets-all");
+                    return;
+                }
+                ("g", KeyCode::Char('m')) => {
+                    self.dispatch_command("macro-sheet");
+                    return;
+                }
+                ("g", KeyCode::Char('&')) => {
+                    self.dispatch_command("join-sheets-all");
+                    return;
+                }
+                ("g", KeyCode::Char('M')) => {
+                    self.mode = InputMode::CommandPalette(LineEditor::new("melt-regex:"));
+                    return;
+                }
+                ("g", KeyCode::Char('Y')) => {
+                    self.dispatch_command("syscopy-row");
                     return;
                 }
                 ("g", KeyCode::Char('F')) => {
@@ -603,6 +721,51 @@ impl App {
                     self.dispatch_command("freq-summary");
                     return;
                 }
+                ("z", KeyCode::Char('+')) => {
+                    self.mode = InputMode::CommandPalette(LineEditor::new("memo-agg:"));
+                    return;
+                }
+                ("z", KeyCode::Char('O')) => {
+                    self.dispatch_command("options-sheet-local");
+                    return;
+                }
+                ("z", KeyCode::Char('a')) => {
+                    self.dispatch_command("addcol-new");
+                    return;
+                }
+                ("z", KeyCode::Char('|')) => {
+                    self.mode = InputMode::SelectColRegex {
+                        editor: LineEditor::new(""),
+                        select: true,
+                    };
+                    // Override to expression mode
+                    self.mode = InputMode::CommandPalette(LineEditor::new("select-expr:"));
+                    return;
+                }
+                ("z", KeyCode::Char('\\')) => {
+                    self.mode = InputMode::CommandPalette(LineEditor::new("unselect-expr:"));
+                    return;
+                }
+                ("z", KeyCode::Char('/')) => {
+                    self.mode = InputMode::CommandPalette(LineEditor::new("search-expr:"));
+                    return;
+                }
+                ("z", KeyCode::Char('?')) => {
+                    self.mode = InputMode::CommandPalette(LineEditor::new("searchr-expr:"));
+                    return;
+                }
+                ("z", KeyCode::Char('Y')) => {
+                    self.dispatch_command("syscopy-cell");
+                    return;
+                }
+                ("z", KeyCode::Char('~')) => {
+                    self.dispatch_command("type-any");
+                    return;
+                }
+                ("z", KeyCode::Char('#')) => {
+                    self.dispatch_command("type-len");
+                    return;
+                }
                 ("z", KeyCode::Char('r')) => {
                     self.mode = InputMode::GotoRow(LineEditor::new(""));
                     return;
@@ -613,10 +776,6 @@ impl App {
                 }
                 ("z", KeyCode::Char('_')) => {
                     self.mode = InputMode::ResizeColInput(LineEditor::new(""));
-                    return;
-                }
-                ("z", KeyCode::Char('a')) => {
-                    self.mode = InputMode::AddRowsInput(LineEditor::new(""));
                     return;
                 }
                 ("z", KeyCode::Char('s')) => {
@@ -659,6 +818,22 @@ impl App {
                 }
                 ("gz", KeyCode::Char('"')) => {
                     self.dispatch_command("dup-rows-deep");
+                    return;
+                }
+                ("gz", KeyCode::Char('[')) => {
+                    self.dispatch_command("sort-keys-asc-add");
+                    return;
+                }
+                ("gz", KeyCode::Char(']')) => {
+                    self.dispatch_command("sort-keys-desc-add");
+                    return;
+                }
+                ("gz", KeyCode::Char('P')) => {
+                    self.dispatch_command("syspaste-cells");
+                    return;
+                }
+                ("gz", KeyCode::Char('Y')) => {
+                    self.dispatch_command("syscopy-selected");
                     return;
                 }
                 // g+z chains into gz prefix
@@ -853,6 +1028,32 @@ impl App {
                 return;
             }
 
+            // --- Regex-derived columns (Group B) ---
+            KeyCode::Char(':') => {
+                self.mode = InputMode::CommandPalette(LineEditor::new("split-col:"));
+                return;
+            }
+            KeyCode::Char(';') => {
+                self.mode = InputMode::CommandPalette(LineEditor::new("capture-col:"));
+                return;
+            }
+            KeyCode::Char('*') => {
+                self.mode = InputMode::CommandPalette(LineEditor::new("subst-col:"));
+                return;
+            }
+            KeyCode::Char('(') => {
+                self.dispatch_command("expand-col");
+                return;
+            }
+            KeyCode::Char(')') => {
+                self.dispatch_command("contract-col");
+                return;
+            }
+            KeyCode::Char('Y') => {
+                self.dispatch_command("syscopy-row");
+                return;
+            }
+
             // --- Navigation: go to column by regex ---
             KeyCode::Char('c') => {
                 self.mode = InputMode::GotoColRegex(LineEditor::new(""));
@@ -952,7 +1153,9 @@ impl App {
 
             // --- Multi-sheet operations ---
             KeyCode::Char('&') => {
-                self.join_top_two_sheets();
+                // Open palette pre-filtered to join types (GAP-092)
+                self.mode = InputMode::CommandPalette(LineEditor::new("join-type-"));
+                return;
             }
             KeyCode::Char('W') => {
                 let col_idx = resolve_cursor_col_idx(sheet);
@@ -1063,7 +1266,7 @@ impl App {
             }
 
             // --- Command palette ---
-            KeyCode::Char(':' | ' ') => {
+            KeyCode::Char(' ') => {
                 self.mode = InputMode::CommandPalette(LineEditor::new(""));
                 return;
             }
@@ -1433,6 +1636,72 @@ impl App {
             {
                 let added = visidata_core::sheets::split_column(sheet, idx, pattern);
                 self.status = format!("split into {added} columns");
+            }
+            return;
+        }
+
+        // split-col: (`:` key prefix) — same as split: but from new binding
+        if let Some(pattern) = query.strip_prefix("split-col:") {
+            if let Some(sheet) = self.stack.active_mut()
+                && let Some(idx) = resolve_cursor_col_idx(sheet)
+            {
+                let added = visidata_core::sheets::split_column(sheet, idx, pattern);
+                self.status = format!("split into {added} columns");
+            }
+            return;
+        }
+
+        // capture-col: (`;` key) — add capture-group columns
+        if let Some(pattern) = query.strip_prefix("capture-col:") {
+            if let Some(sheet) = self.stack.active_mut()
+                && let Some(idx) = resolve_cursor_col_idx(sheet)
+            {
+                let added = visidata_core::sheets::capture_columns(sheet, idx, pattern);
+                match added {
+                    Ok(n) => self.status = format!("added {n} capture columns"),
+                    Err(e) => self.status = format!("invalid regex: {e}"),
+                }
+            }
+            return;
+        }
+
+        // subst-col: (`*` key) — add substitution column
+        if let Some(pattern_repl) = query.strip_prefix("subst-col:") {
+            if let Some(sheet) = self.stack.active_mut()
+                && let Some(idx) = resolve_cursor_col_idx(sheet)
+            {
+                match visidata_core::sheets::subst_column(sheet, idx, pattern_repl) {
+                    Ok(()) => self.status = "added substitution column".into(),
+                    Err(e) => self.status = format!("invalid pattern: {e}"),
+                }
+            }
+            return;
+        }
+
+        // melt-regex: (`gM` key) — melt with column-name regex
+        if let Some(regex) = query.strip_prefix("melt-regex:") {
+            if let Some(sheet) = self.stack.active() {
+                let melted = visidata_core::sheets::melt_sheet_regex(sheet, regex);
+                match melted {
+                    Ok(m) => self.stack.push(m),
+                    Err(e) => self.status = format!("invalid regex: {e}"),
+                }
+            }
+            return;
+        }
+
+        // memo-agg: (`z+` key) — show one aggregation in status
+        if let Some(func_name) = query.strip_prefix("memo-agg:") {
+            if let Some(sheet) = self.stack.active()
+                && let Some(col_idx) = resolve_cursor_col_idx(sheet)
+            {
+                let func = visidata_core::aggregation::AggFunc::from_name(func_name);
+                if let Some(f) = func {
+                    let val = visidata_core::aggregation::aggregate(&sheet.columns[col_idx], &sheet.rows, f);
+                    self.status = format!("{func_name}={val}");
+                } else {
+                    self.status = format!("unknown aggregator: {func_name}");
+                }
             }
             return;
         }
@@ -2279,6 +2548,133 @@ impl App {
                 }
             }
 
+            // --- Group A: wiring ---
+            "save-all" => {
+                let mut saved = 0usize;
+                for sheet in self.stack.iter() {
+                    if let Some(ref path) = sheet.source {
+                        let _ = visidata_loaders::save_sheet(sheet, path);
+                        saved += 1;
+                    }
+                }
+                self.status = format!("saved {saved} sheets");
+            }
+            "open-config" => {
+                if let Some(path) = visidata_core::config::default_config_path() {
+                    match visidata_core::sheets::text_sheet_from_file(&path) {
+                        Ok(s) => self.stack.push(s),
+                        Err(e) => self.status = format!("cannot open config: {e}"),
+                    }
+                } else {
+                    self.status = "no config path found".into();
+                }
+            }
+            "sheets-all" => {
+                let names = self.all_sheet_names.clone();
+                let mut sheet = Sheet::new("sheets_all");
+                sheet.add_column("name", 0);
+                for name in &names {
+                    sheet.add_row(vec![visidata_core::Value::Text(name.clone())]);
+                }
+                self.stack.push(sheet);
+            }
+            "macro-sheet" => {
+                let macros = self.macro_store.all().to_vec();
+                let mut sheet = Sheet::new("macros");
+                sheet.add_column("name", 0);
+                sheet.add_column("keystrokes", 1);
+                for mac in &macros {
+                    sheet.add_row(vec![
+                        visidata_core::Value::Text(mac.name.clone()),
+                        #[expect(clippy::cast_possible_wrap, reason = "keystroke count < i64::MAX")]
+                        visidata_core::Value::Int(mac.keystrokes.len() as i64),
+                    ]);
+                }
+                self.stack.push(sheet);
+            }
+            "save-cmdlog" => self.save_command_log(),
+            "options-sheet-local" => {
+                let sheet_name = self.stack.active().map(|s| s.name.clone());
+                let sheet = visidata_core::options::options_sheet(&self.options);
+                let mut local = sheet;
+                local.name = format!("options[{}]", sheet_name.unwrap_or_default());
+                self.stack.push(local);
+            }
+            "addcol-new" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let new_source_idx = s.columns.len();
+                    let col_id = visidata_core::ColumnId(new_source_idx);
+                    let mut col = visidata_core::Column::new(col_id, "new_col", new_source_idx);
+                    col.width = Some(10);
+                    for row in &mut s.rows {
+                        row.set(new_source_idx, visidata_core::Value::Null);
+                    }
+                    s.columns.push(col);
+                }
+            }
+            "join-sheets-all" => {
+                self.join_all_sheets();
+            }
+            "sort-keys-asc-add" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let key_indices: Vec<usize> = s.columns.iter().enumerate()
+                        .filter(|(_, c)| c.is_key)
+                        .map(|(i, _)| i)
+                        .collect();
+                    for idx in key_indices {
+                        s.sort_by_add(idx, SortDirection::Ascending);
+                    }
+                }
+            }
+            "sort-keys-desc-add" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let key_indices: Vec<usize> = s.columns.iter().enumerate()
+                        .filter(|(_, c)| c.is_key)
+                        .map(|(i, _)| i)
+                        .collect();
+                    for idx in key_indices {
+                        s.sort_by_add(idx, SortDirection::Descending);
+                    }
+                }
+            }
+
+            // --- Group B: column types ---
+            "type-any" => {
+                if let Some(s) = self.stack.active_mut() {
+                    set_cursor_col_type(s, visidata_core::ColumnType::Any);
+                }
+            }
+            "type-len" => {
+                if let Some(s) = self.stack.active_mut() {
+                    set_cursor_col_type(s, visidata_core::ColumnType::Len);
+                }
+            }
+
+            // --- Group B: system clipboard ---
+            "syscopy-cell" => self.syscopy(SysClipMode::Cell),
+            "syscopy-row" => self.syscopy(SysClipMode::Row),
+            "syscopy-selected" => self.syscopy(SysClipMode::Selected),
+            "syspaste-cells" => self.syspaste(),
+
+            // --- Group B: external editor ---
+            "sysedit-cell" => self.sysedit_cell(),
+
+            // --- Group B: JSON expand/contract ---
+            "expand-col" => {
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    visidata_core::sheets::expand_json_col(s, col_idx);
+                }
+            }
+            "contract-col" => {
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    visidata_core::sheets::contract_json_col(s, col_idx);
+                }
+            }
+
             // --- TUI ---
             "redraw" => {
                 // Handled externally by the event loop — just mark for redraw.
@@ -2741,10 +3137,11 @@ impl App {
         self.update_status();
     }
 
-    /// Push a sheet onto the stack, recording previous index for jump-prev.
-    #[expect(dead_code, reason = "will replace stack.push() calls in next batch")]
+    /// Push a sheet onto the stack, recording previous index and all-sheets history.
+    #[expect(dead_code, reason = "will replace direct stack.push() calls incrementally")]
     fn push_sheet(&mut self, sheet: Sheet) {
         self.prev_sheet_idx = Some(self.stack.len().saturating_sub(1));
+        self.all_sheet_names.push(sheet.name.clone());
         self.stack.push(sheet);
     }
 
@@ -2778,6 +3175,131 @@ impl App {
             self.last_errors.pop_front();
         }
         self.status = msg;
+    }
+
+    /// Save the command log to a .vdj file.
+    fn save_command_log(&mut self) {
+        let path = std::path::PathBuf::from("vd_session.vdj");
+        let json = serde_json::to_string_pretty(&self.command_log)
+            .unwrap_or_default();
+        match std::fs::write(&path, json) {
+            Ok(()) => self.status = format!("saved command log to {}", path.display()),
+            Err(e) => self.status = format!("save failed: {e}"),
+        }
+    }
+
+    /// Join all sheets in the stack cascade (g&).
+    fn join_all_sheets(&mut self) {
+        let sheets: Vec<&Sheet> = self.stack.iter().collect();
+        if sheets.len() < 2 {
+            self.status = "need at least 2 sheets to join".into();
+            return;
+        }
+        let mut result = visidata_core::sheets::join_sheets(sheets[0], sheets[1], visidata_core::sheets::JoinType::Inner);
+        for s in sheets.iter().skip(2) {
+            result = visidata_core::sheets::join_sheets(&result, s, visidata_core::sheets::JoinType::Inner);
+        }
+        self.stack.push(result);
+    }
+
+    /// Copy data to the system clipboard.
+    fn syscopy(&mut self, mode: SysClipMode) {
+        let text = match mode {
+            SysClipMode::Cell => {
+                self.stack.active().and_then(|s| {
+                    if s.rows.is_empty() { return None; }
+                    let vis = s.visible_columns();
+                    let col = vis.get(s.cursor_col)?;
+                    Some(col.display_value(&s.rows[s.cursor_row]))
+                })
+            }
+            SysClipMode::Row => {
+                self.stack.active().and_then(|s| {
+                    if s.rows.is_empty() { return None; }
+                    let vis = s.visible_columns();
+                    let fields: Vec<_> = vis.iter().map(|c| c.display_value(&s.rows[s.cursor_row])).collect();
+                    Some(fields.join("\t"))
+                })
+            }
+            SysClipMode::Selected => {
+                self.stack.active().map(|s| {
+                    let vis = s.visible_columns();
+                    s.rows.iter()
+                        .filter(|r| r.selected)
+                        .map(|row| vis.iter().map(|c| c.display_value(row)).collect::<Vec<_>>().join("\t"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+            }
+        };
+        let Some(text) = text else { return; };
+        if let Err(e) = sys_clipboard_write(&text) {
+            self.status = format!("clipboard error: {e}");
+        } else {
+            self.status = format!("copied {} chars", text.len());
+        }
+    }
+
+    /// Paste from the system clipboard at cursor position.
+    fn syspaste(&mut self) {
+        match sys_clipboard_read() {
+            Ok(text) => {
+                if let Some(sheet) = self.stack.active_mut()
+                    && !sheet.rows.is_empty()
+                {
+                    let vis_indices: Vec<usize> = sheet.visible_columns().iter()
+                        .map(|c| c.source_idx)
+                        .collect();
+                    for (row_offset, line) in text.lines().enumerate() {
+                        let row_idx = sheet.cursor_row + row_offset;
+                        if row_idx >= sheet.rows.len() { break; }
+                        for (col_offset, field) in line.split('\t').enumerate() {
+                            let source_idx = vis_indices.get(sheet.cursor_col + col_offset).copied();
+                            if let Some(si) = source_idx {
+                                sheet.set_cell(row_idx, si, visidata_core::Value::Text(field.to_owned()));
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => self.status = format!("paste error: {e}"),
+        }
+    }
+
+    /// Open the current cell in `$EDITOR` and read back the result.
+    fn sysedit_cell(&mut self) {
+        let Some(sheet) = self.stack.active_mut() else { return; };
+        if sheet.rows.is_empty() { return; }
+        let Some(col_idx) = resolve_cursor_col_idx(sheet) else { return; };
+        let display = sheet.columns[col_idx].display_value(&sheet.rows[sheet.cursor_row]);
+        let source_idx = sheet.columns[col_idx].source_idx;
+        let row_idx = sheet.cursor_row;
+
+        // Write to temp file
+        let mut tmp = std::env::temp_dir();
+        tmp.push("vd_cell_edit.txt");
+        if std::fs::write(&tmp, &display).is_err() { return; }
+
+        // Suspend TUI, spawn editor
+        let editor = std::env::var("VISUAL")
+            .or_else(|_| std::env::var("EDITOR"))
+            .unwrap_or_else(|_| "vi".into());
+
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen);
+        crossterm::terminal::disable_raw_mode().ok();
+
+        let status = std::process::Command::new(&editor).arg(&tmp).status();
+
+        crossterm::terminal::enable_raw_mode().ok();
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen);
+
+        if status.is_ok()
+            && let Ok(new_val) = std::fs::read_to_string(&tmp)
+        {
+            let val = visidata_core::Value::Text(new_val.trim_end_matches('\n').to_owned());
+            sheet.set_cell(row_idx, source_idx, val);
+        }
+        let _ = std::fs::remove_file(&tmp);
     }
 
     /// Reload the current sheet from its source file.

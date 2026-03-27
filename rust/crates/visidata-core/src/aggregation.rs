@@ -12,6 +12,10 @@ pub enum AggFunc {
     Count,
     Min,
     Max,
+    Median,
+    Mode,
+    Stdev,
+    Distinct,
 }
 
 impl AggFunc {
@@ -19,21 +23,40 @@ impl AggFunc {
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
-            Self::Sum => "sum",
-            Self::Avg => "avg",
-            Self::Count => "count",
-            Self::Min => "min",
-            Self::Max => "max",
+            Self::Sum      => "sum",
+            Self::Avg      => "avg",
+            Self::Count    => "count",
+            Self::Min      => "min",
+            Self::Max      => "max",
+            Self::Median   => "median",
+            Self::Mode     => "mode",
+            Self::Stdev    => "stdev",
+            Self::Distinct => "distinct",
+        }
+    }
+
+    /// Look up an `AggFunc` by name (case-insensitive).
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_lowercase().as_str() {
+            "sum"      => Some(Self::Sum),
+            "avg"|"mean" => Some(Self::Avg),
+            "count"    => Some(Self::Count),
+            "min"      => Some(Self::Min),
+            "max"      => Some(Self::Max),
+            "median"   => Some(Self::Median),
+            "mode"     => Some(Self::Mode),
+            "stdev"|"std" => Some(Self::Stdev),
+            "distinct" => Some(Self::Distinct),
+            _ => None,
         }
     }
 }
 
 /// Compute an aggregation over the given rows for a column.
 #[must_use]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "acceptable for aggregation summary"
-)]
+#[expect(clippy::cast_precision_loss, reason = "acceptable for aggregation summary")]
+#[expect(clippy::too_many_lines, reason = "flat match over all aggregation variants")]
 pub fn aggregate(col: &Column, rows: &[Row], func: AggFunc) -> Value {
     match func {
         AggFunc::Count => {
@@ -92,9 +115,7 @@ pub fn aggregate(col: &Column, rows: &[Row], func: AggFunc) -> Value {
             let mut max_val: Option<Value> = None;
             for row in rows {
                 let val = col.typed_value(row);
-                if val.is_null() {
-                    continue;
-                }
+                if val.is_null() { continue; }
                 if let Some(ref current) = max_val {
                     if val.partial_cmp(current) == Some(std::cmp::Ordering::Greater) {
                         max_val = Some(val);
@@ -104,6 +125,55 @@ pub fn aggregate(col: &Column, rows: &[Row], func: AggFunc) -> Value {
                 }
             }
             max_val.unwrap_or(Value::Null)
+        }
+        AggFunc::Median => {
+            let mut vals: Vec<f64> = rows.iter()
+                .filter_map(|r| col.typed_value(r).as_float())
+                .collect();
+            if vals.is_empty() { return Value::Null; }
+            vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let mid = vals.len() / 2;
+            let median = if vals.len().is_multiple_of(2) {
+                f64::midpoint(vals[mid - 1], vals[mid])
+            } else {
+                vals[mid]
+            };
+            Value::Float(median)
+        }
+        AggFunc::Mode => {
+            use std::collections::HashMap;
+            let mut counts: HashMap<String, (usize, Value)> = HashMap::new();
+            for row in rows {
+                let val = col.typed_value(row);
+                if val.is_null() { continue; }
+                let key = val.to_string();
+                let entry = counts.entry(key).or_insert((0, val));
+                entry.0 += 1;
+            }
+            counts.into_values()
+                .max_by_key(|(n, _)| *n)
+                .map_or(Value::Null, |(_, v)| v)
+        }
+        #[expect(clippy::cast_precision_loss, reason = "acceptable for stdev")]
+        AggFunc::Stdev => {
+            let vals: Vec<f64> = rows.iter()
+                .filter_map(|r| col.typed_value(r).as_float())
+                .collect();
+            let n = vals.len();
+            if n < 2 { return Value::Null; }
+            let mean = vals.iter().sum::<f64>() / n as f64;
+            let variance = vals.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
+            Value::Float(variance.sqrt())
+        }
+        AggFunc::Distinct => {
+            use std::collections::HashSet;
+            let distinct: HashSet<String> = rows.iter()
+                .map(|r| col.typed_value(r))
+                .filter(|v| !v.is_null())
+                .map(|v| v.to_string())
+                .collect();
+            #[expect(clippy::cast_possible_wrap, reason = "distinct count < i64::MAX")]
+            Value::Int(distinct.len() as i64)
         }
     }
 }

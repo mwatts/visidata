@@ -84,17 +84,32 @@ pub fn draw_sheet(
     clippy::cast_possible_truncation,
     reason = "display widths won't exceed u16::MAX"
 )]
+#[expect(clippy::too_many_lines, reason = "renderer — splitting would not improve clarity")]
 fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme) {
     let visible_cols = sheet.visible_columns();
     if visible_cols.is_empty() {
         return;
     }
 
-    // Calculate column widths
+    // Build per-column metadata: whether there are hidden cols before each visible col (GAP-124)
+    let all_cols = &sheet.columns;
+    let vis_indices: Vec<usize> = all_cols.iter().enumerate()
+        .filter(|(_, c)| !c.is_hidden())
+        .map(|(i, _)| i)
+        .collect();
+
+    // For each visible column, does a hidden col precede it?
+    let has_hidden_before: Vec<bool> = vis_indices.iter().enumerate().map(|(vi, &ci)| {
+        let prev_vis = if vi == 0 { 0 } else { vis_indices[vi - 1] + 1 };
+        (prev_vis..ci).any(|i| all_cols.get(i).is_some_and(visidata_core::Column::is_hidden))
+    }).collect();
+
+    // Calculate column widths (add 1 for hidden indicator `…` where needed)
     let col_widths: Vec<u16> = visible_cols
         .iter()
-        .map(|col| {
-            col.width.unwrap_or_else(|| {
+        .enumerate()
+        .map(|(vi, col)| {
+            let base = col.width.unwrap_or_else(|| {
                 let header_w = UnicodeWidthStr::width(col.name.as_str()) as u16;
                 let max_data_w = sheet
                     .rows
@@ -107,19 +122,26 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme) {
                     .max()
                     .unwrap_or(0);
                 header_w.max(max_data_w).clamp(MIN_COL_WIDTH, MAX_COL_WIDTH)
-            })
+            });
+            // If there are hidden cols before this one, add a narrow slot for the indicator
+            if *has_hidden_before.get(vi).unwrap_or(&false) { base + 2 } else { base }
         })
         .collect();
 
     let widths: Vec<Constraint> = col_widths.iter().map(|&w| Constraint::Length(w)).collect();
 
-    // Header row
+    // Header row — prepend `…` indicator for hidden columns (GAP-124)
     let header_cells: Vec<Cell<'_>> = visible_cols
         .iter()
         .enumerate()
         .map(|(vi, col)| {
             let style = theme.header_style(col.is_key, vi == sheet.cursor_col);
-            Cell::new(col.name.clone()).style(style)
+            let label = if *has_hidden_before.get(vi).unwrap_or(&false) {
+                format!("…{}", col.name)
+            } else {
+                col.name.clone()
+            };
+            Cell::new(label).style(style)
         })
         .collect();
     let header = TuiRow::new(header_cells);

@@ -24,6 +24,10 @@ pub enum ColumnType {
     Bool,
     Date,
     Currency,
+    /// Pass-through (display raw value without coercion, like `anytype` in Python).
+    Any,
+    /// Display the length of the value (text chars, bytes length, etc.).
+    Len,
 }
 
 impl ColumnType {
@@ -31,12 +35,14 @@ impl ColumnType {
     #[must_use]
     pub const fn indicator(&self) -> &'static str {
         match self {
-            Self::Text => "~",
-            Self::Int => "#",
-            Self::Float => "%",
-            Self::Bool => "?",
-            Self::Date => "@",
+            Self::Text     => "~",
+            Self::Int      => "#",
+            Self::Float    => "%",
+            Self::Bool     => "?",
+            Self::Date     => "@",
             Self::Currency => "$",
+            Self::Any      => " ",
+            Self::Len      => "n",
         }
     }
 
@@ -46,7 +52,7 @@ impl ColumnType {
     #[must_use]
     pub fn coerce(&self, value: &Value) -> Value {
         match self {
-            Self::Text => value.clone(),
+            Self::Text | Self::Any => value.clone(),
             Self::Int => value.as_int().map_or_else(
                 || Value::Error(format!("cannot convert {} to int", value.type_name())),
                 Value::Int,
@@ -99,6 +105,17 @@ impl ColumnType {
                     |_| Value::Error(format!("cannot parse currency: {s}")),
                     Value::Float,
                 )
+            }
+            // Len: return the length of the display string / byte count.
+            Self::Len => {
+                #[expect(clippy::cast_possible_wrap, reason = "string length < i64::MAX")]
+                let n = match value {
+                    Value::Text(s) => s.chars().count() as i64,
+                    Value::Bytes(b) => b.len() as i64,
+                    Value::Null => 0,
+                    other => other.to_string().chars().count() as i64,
+                };
+                Value::Int(n)
             }
         }
     }
