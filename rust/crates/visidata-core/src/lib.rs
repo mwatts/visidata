@@ -1,3 +1,4 @@
+pub mod async_loader;
 mod column;
 pub mod commands;
 pub mod config;

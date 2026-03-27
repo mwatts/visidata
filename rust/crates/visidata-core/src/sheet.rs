@@ -1,6 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::async_loader::LoadingState;
 use crate::column::{Column, ColumnId};
 use crate::row::Row;
 use crate::undo::{UndoAction, UndoStack};
@@ -71,6 +72,9 @@ pub struct Sheet {
 
     /// Undo stack for reversible mutations.
     pub undo_stack: UndoStack,
+
+    /// Background loading state.
+    pub loading_state: LoadingState,
 }
 
 /// Global sheet ID counter.
@@ -98,6 +102,7 @@ impl Sheet {
             num_keys: 0,
             modified: false,
             undo_stack: UndoStack::new(),
+            loading_state: LoadingState::default(),
         }
     }
 

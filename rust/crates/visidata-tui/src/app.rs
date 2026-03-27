@@ -12,8 +12,8 @@ use ratatui::DefaultTerminal;
 use ratatui::prelude::*;
 
 use visidata_core::{
-    ColumnType, CommandRegistry, Sheet, SheetStack, SortDirection, builtin_commands,
-    options::OptionsManager,
+    ColumnType, CommandRegistry, Sheet, SheetStack, SortDirection, async_loader::LoadHandle,
+    builtin_commands, options::OptionsManager,
 };
 
 use crate::input::{EditResult, LineEditor};
@@ -66,6 +66,9 @@ pub struct App {
 
     /// Color theme.
     pub theme: Theme,
+
+    /// Active background loading handle, if any.
+    load_handle: Option<LoadHandle>,
 }
 
 impl App {
@@ -84,6 +87,7 @@ impl App {
             commands: builtin_commands(),
             options: visidata_core::options::builtin_options(),
             theme: Theme::default(),
+            load_handle: None,
         }
     }
 
@@ -113,7 +117,20 @@ impl App {
         while self.running {
             terminal.draw(|frame| self.draw(frame))?;
 
-            if let Event::Key(key) = event::read()? {
+            // Poll for background loading data.
+            self.poll_loader();
+
+            // Poll for keyboard events with a timeout so we can refresh
+            // during background loads.
+            let timeout = if self.load_handle.is_some() {
+                std::time::Duration::from_millis(50)
+            } else {
+                std::time::Duration::from_millis(500)
+            };
+
+            if event::poll(timeout)?
+                && let Event::Key(key) = event::read()?
+            {
                 match &self.mode {
                     InputMode::Normal => self.handle_normal_key(key),
                     InputMode::RenameColumn(_)
@@ -125,6 +142,60 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Poll the background loader for new data.
+    fn poll_loader(&mut self) {
+        use visidata_core::async_loader::{LoadMessage, LoadingState};
+
+        let Some(handle) = &self.load_handle else {
+            return;
+        };
+
+        // Drain all available messages without blocking.
+        loop {
+            match handle.receiver.try_recv() {
+                Ok(LoadMessage::Columns(cols)) => {
+                    if let Some(sheet) = self.stack.active_mut() {
+                        sheet.columns = cols;
+                    }
+                }
+                Ok(LoadMessage::Rows(rows)) => {
+                    if let Some(sheet) = self.stack.active_mut() {
+                        let count = rows.len();
+                        sheet.rows.extend(rows);
+                        if let LoadingState::Loading { rows_loaded } = &mut sheet.loading_state {
+                            *rows_loaded += count;
+                        }
+                    }
+                }
+                Ok(LoadMessage::Done) => {
+                    if let Some(sheet) = self.stack.active_mut() {
+                        let total = sheet.num_rows();
+                        sheet.loading_state = LoadingState::Complete { total_rows: total };
+                    }
+                    self.load_handle = None;
+                    self.update_status();
+                    break;
+                }
+                Ok(LoadMessage::Error(e)) => {
+                    self.status = format!("load error: {e}");
+                    if let Some(sheet) = self.stack.active_mut() {
+                        let total = sheet.num_rows();
+                        sheet.loading_state = LoadingState::Complete { total_rows: total };
+                    }
+                    self.load_handle = None;
+                    break;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.load_handle = None;
+                    break;
+                }
+            }
+        }
+
+        self.update_status();
     }
 
     /// Draw the current state to the terminal frame.
@@ -772,8 +843,11 @@ impl App {
             // Modified indicator
             let mod_indicator = if sheet.modified { " [+]" } else { "" };
 
+            // Loading indicator
+            let load_text = sheet.loading_state.status_text();
+
             self.status = format!(
-                "{}{mod_indicator} | {}r x {}c | row {} col {} {type_indicator}{}",
+                "{}{mod_indicator}{load_text} | {}r x {}c | row {} col {} {type_indicator}{}",
                 sheet.name,
                 sheet.num_rows(),
                 sheet.visible_columns().len(),
