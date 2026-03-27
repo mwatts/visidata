@@ -3,9 +3,12 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
+use std::path::Path;
+
 use anyhow::Result;
 use clap::Parser;
 use visidata_core::{Column, ColumnId, Row, Sheet, Value};
+use visidata_loaders::LoaderRegistry;
 use visidata_tui::App;
 
 /// `VisiData` — a terminal interface for exploring and arranging tabular data.
@@ -27,17 +30,13 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    let registry = LoaderRegistry::with_builtins();
+
     let sheet = if cli.files.is_empty() {
         demo_sheet()
     } else {
-        // Phase 3 will add real file loading; for now just show the filename
-        let name = &cli.files[0];
-        let mut sheet = Sheet::new(name.clone());
-        sheet.add_column("(no loader)", 0);
-        sheet.add_row(vec![Value::Text(format!(
-            "File loading not yet implemented. File: {name}"
-        ))]);
-        sheet
+        let path = Path::new(&cli.files[0]);
+        registry.load_file(path)?
     };
 
     let mut app = App::new(sheet);
