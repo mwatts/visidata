@@ -211,6 +211,9 @@ pub struct App {
     /// History of non-empty status messages, newest first (capped at 1 000).
     status_history: std::collections::VecDeque<String>,
 
+    /// Usage counts per command longname, for palette frequency weighting (GAP-UX-20).
+    command_usage: std::collections::HashMap<String, u32>,
+
     /// Per-input-type history of accepted strings, newest first (capped at 50 each).
     input_history: std::collections::HashMap<String, std::collections::VecDeque<String>>,
 
@@ -266,6 +269,7 @@ impl App {
             all_sheet_names: Vec::new(),
             command_log: Vec::new(),
             status_history: std::collections::VecDeque::new(),
+            command_usage: std::collections::HashMap::new(),
             input_history: std::collections::HashMap::new(),
             input_history_pos: std::collections::HashMap::new(),
             input_history_live: std::collections::HashMap::new(),
@@ -497,7 +501,13 @@ impl App {
 
             if let InputMode::CommandPalette(ref editor) = self.mode {
                 let query = editor.text();
-                let matches = self.commands.search_commands(&query);
+                let mut matches = self.commands.search_commands(&query);
+                // Sort by usage (descending) then longname (ascending) for frequency weighting.
+                matches.sort_by(|a, b| {
+                    let ua = self.command_usage.get(&a.longname).copied().unwrap_or(0);
+                    let ub = self.command_usage.get(&b.longname).copied().unwrap_or(0);
+                    ub.cmp(&ua).then_with(|| a.longname.cmp(&b.longname))
+                });
                 renderer::draw_command_palette(frame, area, &query, &matches, &self.theme);
             }
         } else {
@@ -2120,6 +2130,9 @@ impl App {
     /// Dispatch a command by longname.
     #[expect(clippy::too_many_lines, reason = "single match dispatch table")]
     fn dispatch_command(&mut self, longname: &str) {
+        // Track usage for command palette frequency weighting (GAP-UX-20).
+        *self.command_usage.entry(longname.to_owned()).or_insert(0) += 1;
+
         match longname {
             "help-commands" => self.show_help(),
             "cursor-down" => {

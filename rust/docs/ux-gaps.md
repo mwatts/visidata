@@ -26,7 +26,7 @@ Status: `[ ]` open · `[~]` in progress · `[x]` done · `[-]` won't fix
 
 - [x] **GAP-UX-13** Input history: Up/Down in search inputs (`/`, `?`) recalls previous patterns
 - [ ] **GAP-UX-14** Join operations: complete command handlers for inner/left/right/outer joins
-- [ ] **GAP-UX-15** Numeric frequency bins: bin numeric columns into ranges in FreqSheet (`numeric_binning` option)
+- [x] **GAP-UX-15** Numeric frequency bins: FreqSheet auto-bins numeric cols into 10 equal-width ranges when >10 distinct values
 - [x] **GAP-UX-16** Status history sheet: `Ctrl+P` opens sheet of all past status messages
 - [x] **GAP-UX-17** Navigation: `z<` / `z>` jump to prev/next null cell in current column
 
@@ -36,7 +36,7 @@ Status: `[ ]` open · `[~]` in progress · `[x]` done · `[-]` won't fix
 
 - [x] **GAP-UX-18** Column aggregator: shown in Columns Sheet `aggregator` column
 - [x] **GAP-UX-19** Keybinding shadow warning: startup warns when `visidatarc.toml` overrides a builtin
-- [ ] **GAP-UX-20** Command palette: weight results by recency/frequency (simple usage counter)
+- [x] **GAP-UX-20** Command palette: results sorted by usage frequency (most-used commands float to top)
 - [x] **GAP-UX-21** Quit confirmation: already done — "press q again to quit" on modified sheet
 - [x] **GAP-UX-22** Save feedback: now reports rows saved and file size in status
 

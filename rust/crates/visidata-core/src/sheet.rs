@@ -636,10 +636,31 @@ impl Sheet {
     #[must_use]
     pub fn frequency_sheet(&self, col_idx: usize) -> Self {
         use std::collections::BTreeMap;
+        use crate::column::ColumnType;
 
         let Some(col) = self.columns.get(col_idx) else {
             return Self::new(format!("{}_freq", self.name));
         };
+
+        // For numeric columns with > 10 distinct values, use automatic binning (GAP-UX-15).
+        let is_numeric = matches!(col.col_type, ColumnType::Int | ColumnType::Float | ColumnType::Currency);
+        if is_numeric {
+            let nums: Vec<f64> = self.rows.iter()
+                .filter_map(|row| {
+                    match col.typed_value(row) {
+                        Value::Int(n)   => Some(n as f64),
+                        Value::Float(f) => Some(f),
+                        _               => None,
+                    }
+                })
+                .collect();
+            let distinct: std::collections::HashSet<_> = nums.iter()
+                .map(|f| f.to_bits())
+                .collect();
+            if distinct.len() > 10 {
+                return self.numeric_bin_sheet(col_idx, &nums);
+            }
+        }
 
         // Count occurrences of each display value
         let mut counts: BTreeMap<String, usize> = BTreeMap::new();
@@ -676,6 +697,57 @@ impl Sheet {
             }
         ));
         freq_sheet
+    }
+
+    /// Build a frequency sheet with automatic numeric bins (10 equal-width bins).
+    fn numeric_bin_sheet(&self, col_idx: usize, nums: &[f64]) -> Self {
+        const N_BINS: usize = 10;
+
+        let col = &self.columns[col_idx];
+        let min = nums.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max = nums.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+        if (max - min).abs() < f64::EPSILON {
+            // All same value — fall back to single bucket
+            let label = format!("{min}");
+            let columns = vec![
+                Column::new(ColumnId(0), &col.name, 0),
+                Column::new(ColumnId(1), "count", 1),
+            ];
+            #[expect(clippy::cast_possible_wrap, reason = "row count won't exceed i64::MAX")]
+            let rows = vec![Row::new(vec![
+                Value::Text(label),
+                Value::Int(nums.len() as i64),
+            ])];
+            return Self::with_data(format!("{}_freq", col.name), columns, rows);
+        }
+
+        let width = (max - min) / N_BINS as f64;
+        let mut counts = vec![0usize; N_BINS];
+        for &v in nums {
+            #[expect(clippy::cast_sign_loss, reason = "v >= min so difference is non-negative")]
+            #[expect(clippy::cast_possible_truncation, reason = "clamped to N_BINS - 1")]
+            let bin = ((v - min) / width).floor() as usize;
+            counts[bin.min(N_BINS - 1)] += 1;
+        }
+
+        let columns = vec![
+            Column::new(ColumnId(0), &col.name, 0),
+            Column::new(ColumnId(1), "count", 1),
+        ];
+
+        #[expect(clippy::cast_possible_wrap, reason = "row count won't exceed i64::MAX")]
+        let rows: Vec<Row> = (0..N_BINS)
+            .filter(|&i| counts[i] > 0)
+            .map(|i| {
+                let lo = min + i as f64 * width;
+                let hi = lo + width;
+                let label = format!("[{lo:.4}, {hi:.4})");
+                Row::new(vec![Value::Text(label), Value::Int(counts[i] as i64)])
+            })
+            .collect();
+
+        Self::with_data(format!("{}_freq", col.name), columns, rows)
     }
 
     // --- Editing ---
