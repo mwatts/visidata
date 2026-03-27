@@ -13,6 +13,7 @@ use ratatui::prelude::*;
 
 use visidata_core::{
     ColumnType, CommandRegistry, Sheet, SheetStack, SortDirection, builtin_commands,
+    options::OptionsManager,
 };
 
 use crate::input::{EditResult, LineEditor};
@@ -56,6 +57,9 @@ pub struct App {
 
     /// Command registry.
     pub commands: CommandRegistry,
+
+    /// Options manager.
+    pub options: OptionsManager,
 }
 
 impl App {
@@ -72,6 +76,7 @@ impl App {
             last_search: None,
             last_search_forward: true,
             commands: builtin_commands(),
+            options: visidata_core::options::builtin_options(),
         }
     }
 
@@ -307,6 +312,12 @@ impl App {
                     let freq = sheet.frequency_sheet(idx);
                     self.stack.push(freq);
                 }
+            }
+
+            // --- Options sheet ---
+            KeyCode::Char('O') => {
+                let sheet = visidata_core::options::options_sheet(&self.options);
+                self.stack.push(sheet);
             }
 
             // --- Help & Command palette ---

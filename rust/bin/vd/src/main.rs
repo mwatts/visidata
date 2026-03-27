@@ -25,6 +25,10 @@ struct Cli {
     /// Start cursor at column N (1-indexed).
     #[arg(long = "col", short = 'c')]
     start_col: Option<usize>,
+
+    /// Set option: --option name=value
+    #[arg(long = "option", short = 'o', value_name = "NAME=VALUE")]
+    options: Vec<String>,
 }
 
 fn main() -> Result<()> {
@@ -40,6 +44,23 @@ fn main() -> Result<()> {
     };
 
     let mut app = App::new(sheet);
+
+    // Load config file if it exists
+    if let Some(config_path) = visidata_core::config::default_config_path()
+        && let Ok(config) = visidata_core::config::load_config(&config_path) {
+            visidata_core::config::apply_config(&config, &mut app.options);
+            // Apply keybinding overrides
+            for (keystroke, longname) in &config.keybindings {
+                app.commands.add(keystroke, longname, "user-defined");
+            }
+        }
+
+    // Apply CLI option overrides (highest priority)
+    for opt_str in &cli.options {
+        if let Some((name, val)) = opt_str.split_once('=') {
+            app.options.set_global(name, visidata_core::Value::Text(val.to_owned()));
+        }
+    }
 
     // Apply start position if given
     if let Some(sheet) = app.stack.active_mut() {

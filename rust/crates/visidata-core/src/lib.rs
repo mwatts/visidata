@@ -1,7 +1,9 @@
 mod value;
 mod column;
 pub mod commands;
+pub mod config;
 pub mod help;
+pub mod options;
 mod row;
 mod sheet;
 mod sheet_stack;
