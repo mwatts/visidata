@@ -1,0 +1,61 @@
+# VisiData Rust — task runner
+# https://github.com/casey/just
+
+# Default: show available targets
+default:
+    @just --list
+
+# ── Development ──────────────────────────────────────────────────────────────
+
+# Build everything (debug)
+build:
+    cargo build --workspace
+
+# Build release binaries
+build-release:
+    cargo build --workspace --release
+
+# Run the main binary against a file (or demo if no file given)
+run *args:
+    cargo run -p vd -- {{ args }}
+
+# ── Quality ───────────────────────────────────────────────────────────────────
+
+# Run all tests
+test:
+    cargo test --workspace
+
+# Lint (zero warnings required)
+lint:
+    cargo clippy --workspace
+
+# Check formatting
+fmt-check:
+    cargo fmt --check
+
+# Apply formatting
+fmt:
+    cargo fmt
+
+# Run all quality checks (CI gate)
+check: fmt-check lint test
+
+# ── Install ───────────────────────────────────────────────────────────────────
+
+# Install all binaries to ~/.cargo/bin (makes vd_duckdb discoverable on PATH)
+install:
+    cargo install --path bin/vd --locked
+    cargo install --path bin/vd_duckdb --locked
+
+# Install only the main vd binary
+install-vd:
+    cargo install --path bin/vd --locked
+
+# Install only the DuckDB external loader
+install-duckdb:
+    cargo install --path bin/vd_duckdb --locked
+
+# Uninstall all vd binaries
+uninstall:
+    cargo uninstall vd || true
+    cargo uninstall vd_duckdb || true
