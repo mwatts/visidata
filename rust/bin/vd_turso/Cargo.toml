@@ -1,0 +1,16 @@
+[package]
+name = "vd_turso"
+description = "TursoDB external loader for vd (Arrow IPC subprocess protocol)"
+edition.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+visidata-ext-protocol = { workspace = true }
+turso = { workspace = true }
+tokio = { workspace = true }
+arrow = { workspace = true, features = ["ipc"] }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

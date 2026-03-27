@@ -42,10 +42,11 @@ check: fmt-check lint test
 
 # ── Install ───────────────────────────────────────────────────────────────────
 
-# Install all binaries to ~/.cargo/bin (makes vd_duckdb discoverable on PATH)
+# Install all binaries to ~/.cargo/bin (makes external loaders discoverable on PATH)
 install:
     cargo install --path bin/vd --locked
     cargo install --path bin/vd_duckdb --locked
+    cargo install --path bin/vd_turso --locked
 
 # Install only the main vd binary
 install-vd:
@@ -55,7 +56,12 @@ install-vd:
 install-duckdb:
     cargo install --path bin/vd_duckdb --locked
 
+# Install only the TursoDB external loader
+install-turso:
+    cargo install --path bin/vd_turso --locked
+
 # Uninstall all vd binaries
 uninstall:
     cargo uninstall vd || true
     cargo uninstall vd_duckdb || true
+    cargo uninstall vd_turso || true
