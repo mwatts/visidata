@@ -1,7 +1,10 @@
+pub mod aggregation;
 pub mod async_loader;
+pub mod clipboard;
 mod column;
 pub mod commands;
 pub mod config;
+pub mod expr_column;
 pub mod help;
 pub mod menu;
 pub mod options;

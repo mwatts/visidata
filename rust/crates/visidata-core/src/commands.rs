@@ -257,6 +257,18 @@ pub fn builtin_commands() -> CommandRegistry {
     // Undo
     reg.add("", "undo", "undo last edit (Ctrl+Z)");
 
+    // Clipboard
+    reg.add("y", "yank-cell", "yank (copy) current cell");
+    reg.add("p", "paste-cell", "paste cell value");
+    reg.add("gy", "yank-row", "yank (copy) current row");
+    reg.add("gp", "paste-row", "paste row(s) after cursor");
+
+    // Aggregation
+    reg.add("+", "aggregate-col", "show aggregation for current column");
+
+    // Expression columns
+    reg.add("=", "expr-col", "add expression column");
+
     // Save
     reg.add("", "save-sheet", "save sheet to source file (Ctrl+S)");
 

@@ -3,7 +3,10 @@
 use std::io;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -15,6 +18,7 @@ use visidata_core::{
     ColumnType, CommandRegistry, Sheet, SheetStack, SortDirection,
     async_loader::LoadHandle,
     builtin_commands,
+    clipboard::Clipboard,
     menu::{MenuBar, MenuItem, MenuState, builtin_menu_bar},
     options::OptionsManager,
 };
@@ -80,6 +84,9 @@ pub struct App {
 
     /// Menu navigation state.
     menu_state: MenuState,
+
+    /// Clipboard for yank/paste.
+    clipboard: Clipboard,
 }
 
 impl App {
@@ -101,6 +108,7 @@ impl App {
             load_handle: None,
             menu_bar: builtin_menu_bar(),
             menu_state: MenuState::new(),
+            clipboard: Clipboard::new(),
         }
     }
 
@@ -111,14 +119,14 @@ impl App {
     /// Returns an error if terminal setup or I/O fails.
     pub fn run(&mut self) -> Result<()> {
         enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen)?;
+        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
         let mut terminal = ratatui::init();
 
         let result = self.event_loop(&mut terminal);
 
         ratatui::restore();
         disable_raw_mode()?;
-        execute!(io::stdout(), LeaveAlternateScreen)?;
+        execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
 
         result
     }
@@ -141,17 +149,23 @@ impl App {
                 std::time::Duration::from_millis(500)
             };
 
-            if event::poll(timeout)?
-                && let Event::Key(key) = event::read()?
-            {
-                match &self.mode {
-                    InputMode::Normal => self.handle_normal_key(key),
-                    InputMode::Menu => self.handle_menu_key(key),
-                    InputMode::RenameColumn(_)
-                    | InputMode::EditCell(_)
-                    | InputMode::SearchForward(_)
-                    | InputMode::SearchBackward(_)
-                    | InputMode::CommandPalette(_) => self.handle_input_key(key),
+            if event::poll(timeout)? {
+                match event::read()? {
+                    Event::Key(key) => match &self.mode {
+                        InputMode::Normal => self.handle_normal_key(key),
+                        InputMode::Menu => self.handle_menu_key(key),
+                        InputMode::RenameColumn(_)
+                        | InputMode::EditCell(_)
+                        | InputMode::SearchForward(_)
+                        | InputMode::SearchBackward(_)
+                        | InputMode::CommandPalette(_) => self.handle_input_key(key),
+                    },
+                    Event::Mouse(mouse) => self.handle_mouse(mouse),
+                    Event::Resize(_, _) => {
+                        // Terminal resized — just redraw on next iteration.
+                        self.update_status();
+                    }
+                    _ => {}
                 }
             }
         }
@@ -533,6 +547,45 @@ impl App {
                 self.stack.push(index);
             }
 
+            // --- Clipboard ---
+            KeyCode::Char('y') => {
+                // Yank current cell
+                let vis = sheet.visible_columns();
+                if let Some(&col) = vis.get(sheet.cursor_col) {
+                    let val = col.typed_value(&sheet.rows[sheet.cursor_row]);
+                    self.clipboard.yank_cell(val);
+                    self.status = "yanked cell".into();
+                }
+            }
+            KeyCode::Char('p') => {
+                // Paste cell
+                if let visidata_core::clipboard::ClipboardContent::Cell(val) =
+                    self.clipboard.content().clone()
+                {
+                    let vis = sheet.visible_columns();
+                    if let Some(&col) = vis.get(sheet.cursor_col) {
+                        let source_idx = col.source_idx;
+                        sheet.set_cell(sheet.cursor_row, source_idx, val);
+                    }
+                }
+            }
+
+            // --- Aggregation ---
+            KeyCode::Char('+') => {
+                let vis = sheet.visible_columns();
+                if let Some(&col) = vis.get(sheet.cursor_col) {
+                    let summary = visidata_core::aggregation::aggregate_summary(col, &sheet.rows);
+                    self.status = summary;
+                }
+                return; // don't overwrite status
+            }
+
+            // --- Expression column ---
+            KeyCode::Char('=') => {
+                self.mode = InputMode::CommandPalette(LineEditor::new("="));
+                return;
+            }
+
             // --- Menu ---
             KeyCode::F(10) => {
                 self.menu_state.toggle();
@@ -660,6 +713,16 @@ impl App {
     /// Execute a command by searching the registry for a query match.
     fn execute_command_by_query(&mut self, query: &str) {
         if query.is_empty() {
+            return;
+        }
+
+        // Handle expression column: query starts with "="
+        if let Some(expr) = query.strip_prefix('=') {
+            if let Some(sheet) = self.stack.active_mut() {
+                let col_name = format!("expr{}", sheet.columns.len());
+                visidata_core::expr_column::add_expression_column(sheet, &col_name, expr);
+                self.status = format!("added column: {col_name}");
+            }
             return;
         }
 
@@ -832,6 +895,43 @@ impl App {
                 }
             }
             "save-sheet" => self.save_current_sheet(),
+            "yank-cell" => {
+                if let Some(s) = self.stack.active()
+                    && !s.rows.is_empty()
+                {
+                    let vis = s.visible_columns();
+                    if let Some(&col) = vis.get(s.cursor_col) {
+                        let val = col.typed_value(&s.rows[s.cursor_row]);
+                        self.clipboard.yank_cell(val);
+                        self.status = "yanked cell".into();
+                    }
+                }
+            }
+            "paste-cell" => {
+                if let visidata_core::clipboard::ClipboardContent::Cell(val) =
+                    self.clipboard.content().clone()
+                    && let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                {
+                    let vis = s.visible_columns();
+                    if let Some(&col) = vis.get(s.cursor_col) {
+                        let source_idx = col.source_idx;
+                        s.set_cell(s.cursor_row, source_idx, val);
+                    }
+                }
+            }
+            "aggregate-col" => {
+                if let Some(s) = self.stack.active() {
+                    let vis = s.visible_columns();
+                    if let Some(&col) = vis.get(s.cursor_col) {
+                        let summary = visidata_core::aggregation::aggregate_summary(col, &s.rows);
+                        self.status = summary;
+                    }
+                } // keep status
+            }
+            "expr-col" => {
+                self.mode = InputMode::CommandPalette(LineEditor::new("="));
+            }
             "join-sheets" => self.join_top_two_sheets(),
             "concat-sheets" => {
                 let sheets: Vec<&Sheet> = self.stack.iter().collect();
@@ -925,6 +1025,24 @@ impl App {
                 sel_text,
             );
         }
+    }
+
+    /// Handle a mouse event.
+    fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                if let Some(sheet) = self.stack.active_mut() {
+                    sheet.cursor_up(3);
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if let Some(sheet) = self.stack.active_mut() {
+                    sheet.cursor_down(3);
+                }
+            }
+            _ => {}
+        }
+        self.update_status();
     }
 
     /// Handle a key event while in menu mode.
