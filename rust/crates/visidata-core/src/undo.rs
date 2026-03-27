@@ -25,6 +25,8 @@ pub enum UndoAction {
     RenameColumn { col_id: usize, old_name: String },
     /// A column's type was changed.
     SetColType { col_id: usize, old_type: ColumnType },
+    /// Rows were reordered (sort); stores the original row order by `RowId`.
+    ReorderRows { order: Vec<crate::row::RowId> },
 }
 
 /// Stack of undo actions for a sheet.

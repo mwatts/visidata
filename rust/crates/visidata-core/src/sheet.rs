@@ -267,8 +267,34 @@ impl Sheet {
         self.apply_sort();
     }
 
-    /// Apply the current sort keys to the rows.
+    /// Re-apply the current sort keys (e.g. after redo). No undo action is pushed.
+    pub fn resort(&mut self) {
+        if self.sort_keys.is_empty() {
+            return;
+        }
+        let columns = &self.columns;
+        let sort_keys = &self.sort_keys;
+        self.rows.sort_by(|a, b| {
+            for key in sort_keys {
+                let Some(col) = columns.get(key.col_idx) else { continue; };
+                let ord = col.typed_value(a).partial_cmp(&col.typed_value(b))
+                    .unwrap_or(std::cmp::Ordering::Equal);
+                let ord = match key.direction {
+                    SortDirection::Ascending => ord,
+                    SortDirection::Descending => ord.reverse(),
+                };
+                if ord != std::cmp::Ordering::Equal { return ord; }
+            }
+            std::cmp::Ordering::Equal
+        });
+        self.clamp_cursor();
+    }
+
+    /// Apply the current sort keys to the rows, recording the original order for undo.
     fn apply_sort(&mut self) {
+        // Save original order for undo
+        let old_order: Vec<_> = self.rows.iter().map(|r| r.id).collect();
+
         let columns = &self.columns;
         let sort_keys = &self.sort_keys;
 
@@ -291,6 +317,7 @@ impl Sheet {
             std::cmp::Ordering::Equal
         });
 
+        self.undo_stack.push(UndoAction::ReorderRows { order: old_order });
         self.clamp_cursor();
     }
 
@@ -729,6 +756,20 @@ impl Sheet {
                 if let Some(col) = self.columns.iter_mut().find(|c| c.id.0 == col_id) {
                     col.col_type = old_type;
                 }
+            }
+            UndoAction::ReorderRows { order } => {
+                // Rebuild row order to match the saved RowId sequence.
+                let mut rows_by_id: std::collections::HashMap<_, _> = self
+                    .rows
+                    .drain(..)
+                    .map(|r| (r.id, r))
+                    .collect();
+                for id in order {
+                    if let Some(row) = rows_by_id.remove(&id) {
+                        self.rows.push(row);
+                    }
+                }
+                // Any rows not in the saved order (shouldn't happen) stay dropped.
             }
         }
 

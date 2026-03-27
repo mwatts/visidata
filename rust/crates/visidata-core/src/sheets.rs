@@ -707,6 +707,78 @@ fn make_row_key(sheet: &Sheet, row: &Row, key_indices: &[usize]) -> String {
         .join("\x00")
 }
 
+/// Transpose a sheet: rows become columns and columns become rows.
+///
+/// Row 0 of the transposed sheet contains the original column names.
+/// Subsequent rows are the transposed data values.
+#[must_use]
+pub fn transpose_sheet(source: &Sheet) -> Sheet {
+    // Each original column becomes a row; each original row becomes a column.
+    let n_cols = source.columns.len();
+    let n_rows = source.rows.len();
+
+    // Output columns: one "name" column + one column per original row.
+    let mut out_cols: Vec<Column> = Vec::with_capacity(n_rows + 1);
+    out_cols.push(Column::new(ColumnId(0), "name", 0));
+    for i in 0..n_rows {
+        out_cols.push(Column::new(ColumnId(i + 1), format!("row{i}"), i + 1));
+    }
+
+    // One output row per original column.
+    let mut out_rows: Vec<Row> = Vec::with_capacity(n_cols);
+    for ci in 0..n_cols {
+        let mut vals = Vec::with_capacity(n_rows + 1);
+        vals.push(Value::Text(source.columns[ci].name.clone()));
+        for row in &source.rows {
+            vals.push(row.get(source.columns[ci].source_idx).clone());
+        }
+        out_rows.push(Row::new(vals));
+    }
+
+    Sheet::with_data(format!("{}_transposed", source.name), out_cols, out_rows)
+}
+
+/// Materialise an expression/derived column into a static value column.
+///
+/// Returns the new column index, or `None` if `col_idx` is out of range.
+pub fn freeze_column(source: &mut Sheet, col_idx: usize) -> Option<usize> {
+    let col = source.columns.get(col_idx)?;
+    let col_name = format!("{}_frozen", col.name);
+    let new_source_idx = source.columns.iter().map(|c| c.source_idx).max().unwrap_or(0) + 1;
+
+    // Materialise values
+    let vals: Vec<Value> = source.rows.iter()
+        .map(|row| source.columns[col_idx].typed_value(row))
+        .collect();
+
+    // Extend each row with the frozen value (set() auto-resizes)
+    for (i, row) in source.rows.iter_mut().enumerate() {
+        row.set(new_source_idx, vals[i].clone());
+    }
+
+    let new_col = Column::new(ColumnId(source.columns.len()), col_name, new_source_idx);
+    source.columns.push(new_col);
+    Some(source.columns.len() - 1)
+}
+
+/// Add an incremental column (1, 2, 3, …) with given start and step.
+pub fn add_incr_column(source: &mut Sheet, start: i64, step: i64) {
+    let new_source_idx = source.columns.iter().map(|c| c.source_idx).max().unwrap_or(0) + 1;
+    let col_name = format!("incr{}", source.columns.len());
+
+    for (i, row) in source.rows.iter_mut().enumerate() {
+        #[expect(clippy::cast_possible_wrap, reason = "row count won't exceed i64::MAX")]
+        let val = start + step * (i as i64);
+        row.set(new_source_idx, Value::Int(val));
+    }
+
+    source.columns.push(Column::new(
+        ColumnId(source.columns.len()),
+        col_name,
+        new_source_idx,
+    ));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

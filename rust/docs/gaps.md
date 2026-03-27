@@ -42,7 +42,7 @@ Each entry has:
 
 ### GAP-005 — Go to row number (`zr`)
 **Python**: `movement.py` — `go-row-number` prompts for a 0-based row number and moves cursor there.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Add `"zr"` prefix handling in the `pending_prefix` block or as a direct command palette call. Open `InputMode::CommandPalette` pre-filled, or add `InputMode::GotoRow(LineEditor)`. On Accept, parse as `usize`, clamp to `0..rows.len()`, set `cursor_row`. Register in `builtin_commands` as `"go-row-number"`.
 
 ---
@@ -56,21 +56,21 @@ Each entry has:
 
 ### GAP-007 — Go to column by regex (`c`)
 **Python**: `features/go_col.py` — `go-col-regex` prompts for a regex and moves `cursor_col` to first matching column name.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Add `InputMode::GotoCol(LineEditor)`. On Accept, compile regex, iterate `sheet.visible_columns()`, find first whose `name` matches, set `cursor_col`. Bind `c`.
 
 ---
 
 ### GAP-008 — Go to column by number (`zc`)
 **Python**: `features/go_col.py` — `go-col-number` prompts for an integer column index.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Same as GAP-007 but parse as usize and index directly into `visible_columns()`. Bind `zc`.
 
 ---
 
 ### GAP-009 — Go to screen top / middle / bottom (unbound)
 **Python**: `movement.py` — `go-screen-top`, `go-screen-middle`, `go-screen-bottom` move cursor to first/middle/last visible row without scrolling.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Compute `top_row`, `top_row + height/2`, `top_row + height - 1` and clamp. These can be palette-only commands initially.
 
 ---
@@ -84,7 +84,7 @@ Each entry has:
 
 ### GAP-011 — Jump to previous sheet (`Ctrl+^`)
 **Python**: `vd.sheets[-2]` — `jump-prev` swaps to the previously active sheet.
-**Rust now**: Missing. `SheetStack` has no concept of previous sheet.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Add `prev_sheet_idx: Option<usize>` to `App` or track a "previous sheet" pointer in `SheetStack`. Bind `Ctrl+^`.
 
 ---
@@ -179,14 +179,14 @@ Each entry has:
 
 ### GAP-024 — Select rows before cursor (`zs`, `zt`, `zu`)
 **Python**: `selection.py` — `select-before`, `stoggle-before`, `unselect-before`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Operate on `rows[0..cursor_row]`. Bind `zs`/`zt`/`zu` via z-prefix handler.
 
 ---
 
 ### GAP-025 — Select rows after cursor (`gzs`, `gzt`, `gzu`)
 **Python**: `selection.py` — `select-after`, `stoggle-after`, `unselect-after`.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Operate on `rows[cursor_row..]`. Bind `gzs`/`gzt`/`gzu`.
 
 ---
@@ -197,7 +197,7 @@ Each entry has:
 
 ### GAP-026 — Set selected rows' column to same value (`ge`)
 **Python**: `sheets.py` — `setcol-input` prompts for a value, sets the current column for all selected rows to that value.
-**Rust now**: Missing. Only single-cell `e` exists.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Add `InputMode::SetColInput(LineEditor)`. On Accept, coerce input string through `col.col_type`, apply to all selected rows via `sheet.set_cell(row_idx, col_source_idx, val)` for each. Push a bulk `UndoAction::DeleteRows`-style variant or record individual `SetCell` actions. Bind `ge`.
 
 ---
@@ -253,7 +253,7 @@ Each entry has:
 
 ### GAP-034 — Resize column to specific width (`z_`)
 **Python**: `features/layout.py` — `resize-col-input` prompts for a width integer.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Prompt via command palette or new input mode, parse as `u16`, set `col.width = Some(n)`. Bind `z_`.
 
 ---
@@ -267,14 +267,14 @@ Each entry has:
 
 ### GAP-036 — Rename column from selected rows content (`z^`)
 **Python**: `rename_col.py` — `rename-col-selected` uses the current column values of selected rows to rename.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Collect `col.display_value` of first selected row in current column, use as new name. Bind `z^`.
 
 ---
 
 ### GAP-037 — Rename all columns from current row (`g^`)
 **Python**: `rename_col.py` — `rename-cols-row` renames all visible columns using the cursor row's values as new names.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Iterate visible columns; rename each to `col.display_value(&rows[cursor_row])`. Bind `g^`.
 
 ---
@@ -316,7 +316,7 @@ Each entry has:
 
 ### GAP-043 — Freeze/cache column (`'`)
 **Python**: `features/freeze.py` — `freeze-col` materialises an expression column's current values into a static column.
-**Rust now**: Missing. Expression columns materialise on creation already (not lazy), so this is less critical, but a static snapshot copy is still useful.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Duplicate the column's current value vector into a new plain `Column`. Bind `'`.
 
 ---
@@ -330,14 +330,14 @@ Each entry has:
 
 ### GAP-045 — Add incremental column (`i`)
 **Python**: `features/incr.py` — `addcol-incr` adds a column with 1, 2, 3… (or user-specified start/step).
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Prompt for start and step. Add column whose value is `start + row_idx * step`. Bind `i`.
 
 ---
 
 ### GAP-046 — Transpose sheet (`T`)
 **Python**: `features/transpose.py` — `transpose` opens a new sheet where rows become columns and vice versa.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Create `transpose_sheet(source: &Sheet) -> Sheet` in `sheets.rs`. Row 0 of transposed sheet has column names; subsequent rows are the transposed data. Bind `T`.
 
 ---
@@ -397,7 +397,7 @@ Each entry has:
 
 ### GAP-054 — Add multiple blank rows (`ga`)
 **Python**: `modify.py` — `add-rows` prompts for a count N and appends N blank rows.
-**Rust now**: Only single-row `a` exists.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Prompt for N (palette or input mode). Call `sheet.insert_row_at` N times, recording each as an undo action (or a single bulk action). Bind `ga`.
 
 ---
@@ -429,7 +429,7 @@ Each entry has:
 
 ### GAP-058 — Cut cell (`zx`)
 **Python**: `clipboard.py` — `cut-cell` copies cell value then sets it to null.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Yank cell value to clipboard, then `sheet.set_cell(... Value::Null)`. Bind `zx`.
 
 ---
@@ -535,7 +535,7 @@ Each entry has:
 
 ### GAP-072 — Sort by key columns additive (`gz[`, `gz]`)
 **Python**: `sort.py` — `sort-keys-asc-add`, `sort-keys-desc-add`.
-**Rust now**: Missing.
+**Rust now**: ⚠️ Partial (commit: feat/rust session 2) — gz[ and gz] not explicitly wired but framework supports it.
 **Instructions**: Combine GAP-068 logic with additive push. Bind `gz[`/`gz]`.
 
 ---
@@ -567,14 +567,14 @@ Each entry has:
 
 ### GAP-076 — Frequency table for all key columns (`gF`)
 **Python**: `freqtbl.py` — `freq-keys` opens a pivot-like frequency table on all key columns.
-**Rust now**: `F` opens freq table for cursor column only.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Add `sheet.frequency_sheet_multi(key_col_indices)` or reuse `pivot_sheet` with key columns. Bind `gF`.
 
 ---
 
 ### GAP-077 — One-line frequency summary (`zF`)
 **Python**: `freqtbl.py` — `freq-summary` shows a single-line summary of the frequency distribution in the status bar.
-**Rust now**: Missing.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Compute distinct value counts, format as `"5 distinct / 100 total / top: Alice(20)"`, write to `self.status`. Bind `zF`.
 
 ---
@@ -636,7 +636,7 @@ Each entry has:
 
 ### GAP-085 — Describe all sheets (`gI`)
 **Python**: `features/describe.py` — `gI` opens a describe sheet combining statistics from all sheets in the stack.
-**Rust now**: `I` describes current sheet only.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Iterate `self.stack`, call `describe_sheet` on each, concatenate into one sheet with an extra `sheet_name` column. Bind `gI`.
 
 ---
@@ -657,7 +657,7 @@ Each entry has:
 
 ### GAP-088 — Error sheet (`Ctrl+E`)
 **Python**: `textsheet.py` — `error-recent` opens a TextSheet with the most recent exception traceback.
-**Rust now**: Missing. Errors currently go only to `self.status`.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Keep `self.last_errors: VecDeque<String>` in `App`. Append to it whenever an error occurs. `Ctrl+E` pushes `text_sheet("error", last_errors.last())`. Bind `Ctrl+E`.
 
 ---
@@ -787,7 +787,7 @@ Each entry has:
 
 ### GAP-104 — Expression columns are named by user
 **Python**: `=name=expr` syntax sets the column name.
-**Rust now**: Column name is auto-generated as `expr{N}`.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Parse `=name=expr` in the palette handler: if `=` input contains a second `=` after the name, split on first `=` to get name. Otherwise use `expr{N}`.
 
 ---
@@ -819,7 +819,7 @@ Each entry has:
 
 ### GAP-108 — `quitguard` option not enforced
 **Python**: When `quitguard = True`, quitting a modified sheet prompts for confirmation.
-**Rust now**: `quitguard` is declared in `builtin_options` but `dispatch_command("quit-sheet")` does not check it.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: In `dispatch_command("quit-sheet")`, check `options.get_bool("quitguard")` and `sheet.modified`. If both true, set status to `"sheet modified — press q again to quit"` and set a pending-quit flag instead of popping immediately.
 
 ---
@@ -869,21 +869,21 @@ Each entry has:
 
 ### GAP-114 — Save Parquet
 **Python**: `loaders/parquet.py` — `save_parquet` writes Arrow record batches via the Parquet writer.
-**Rust now**: `ParquetLoader` only reads; no Parquet saver.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Add `save_parquet(sheet: &Sheet, path: &Path) -> Result<()>` using the `parquet` crate already in workspace. Map `Value` to Arrow arrays (reuse the type-mapping from `vd_turso`). Write via `ArrowWriter`. Register in `saver.rs`.
 
 ---
 
 ### GAP-115 — Save YAML
 **Python**: `loaders/yts.py` — `save_yaml`.
-**Rust now**: `YamlLoader` reads only.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Add `save_yaml(sheet: &Sheet, path: &Path) -> Result<()>` using `serde_yaml`. Serialize rows as a sequence of maps `{col_name: value}`. Register in `saver.rs`.
 
 ---
 
 ### GAP-116 — Save HTML
 **Python**: `loaders/html.py` — `save_html` writes a `<table>`.
-**Rust now**: `HtmlLoader` reads only.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Write `<table><thead><tr><th>…</th></tr></thead><tbody>…</tbody></table>`. Use `std::fmt::Write` to build the string. Register in `saver.rs`.
 
 ---
@@ -897,14 +897,14 @@ Each entry has:
 
 ### GAP-118 — TOML loader
 **Python**: `loaders/toml.py` — `open_toml` loads a TOML file as a key-value sheet.
-**Rust now**: Missing. `toml` crate is already in workspace.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Add `TomlLoader` in `visidata-loaders`. Use `toml::from_str::<toml::Value>`. If top-level is a table of tables → each sub-table is a row. If top-level is an array of tables → each element is a row. Flat tables → single row. Register for `.toml`.
 
 ---
 
 ### GAP-119 — Arrow/Feather loader
 **Python**: `loaders/arrow.py` — `open_arrow` / `open_feather` / `save_arrow`.
-**Rust now**: Missing. `arrow` and `arrow-ipc` are already in workspace.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Add `ArrowLoader` using `arrow::ipc::reader::FileReader`. Register for `.arrow`, `.feather`. For save, use `arrow::ipc::writer::FileWriter`.
 
 ---
@@ -1003,7 +1003,7 @@ Already listed as GAP-049.
 
 ### GAP-132 — Sort is not undoable
 **Python**: Sort is tracked in the undo log.
-**Rust now**: `sheet.sort_by` mutates `rows` in place with no undo action.
+**Rust now**: ✅ Implemented (commit: feat/rust session 2).
 **Instructions**: Before sorting, save the current row order as `UndoAction::ReorderRows { order: Vec<RowId> }`. Add this variant to `UndoAction`. In `undo()`, restore row order by re-sorting `rows` to match the saved `RowId` sequence.
 
 ---

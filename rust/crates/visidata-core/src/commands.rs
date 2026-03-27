@@ -194,6 +194,13 @@ pub fn builtin_commands() -> CommandRegistry {
     reg.add("{", "go-prev-selected", "go to previous selected row");
     reg.add("}", "go-next-selected", "go to next selected row");
     reg.add("zz", "scroll-middle", "scroll current row to middle of screen");
+    reg.add("zr", "go-row-number", "go to row by number");
+    reg.add("c", "go-col-regex", "go to column matching regex");
+    reg.add("zc", "go-col-number", "go to column by number");
+    reg.add("", "go-screen-top", "move cursor to top of visible screen");
+    reg.add("", "go-screen-middle", "move cursor to middle of visible screen");
+    reg.add("", "go-screen-bottom", "move cursor to bottom of visible screen");
+    reg.add("", "jump-prev", "jump to previously active sheet (Ctrl+^)");
 
     // Sheet
     reg.add("q", "quit-sheet", "quit current sheet");
@@ -206,6 +213,13 @@ pub fn builtin_commands() -> CommandRegistry {
     reg.add("gv", "unhide-cols", "unhide all hidden columns");
     reg.add("^", "rename-col", "rename current column");
     reg.add("!", "key-col", "toggle key column");
+    reg.add("z_", "resize-col-input", "resize column to specific width");
+    reg.add("T", "transpose", "open transposed sheet (rows become columns)");
+    reg.add("'", "freeze-col", "freeze/materialise current column as static values");
+    reg.add("i", "addcol-incr", "add incremental column (1, 2, 3…)");
+    reg.add("z^", "rename-col-selected", "rename column from first selected row value");
+    reg.add("g^", "rename-cols-row", "rename all columns from current row values");
+    reg.add("ge", "setcol-input", "set selected rows' current column to value");
     reg.add("H", "slide-left", "move current column one position left");
     reg.add("L", "slide-right", "move current column one position right");
     reg.add("gH", "slide-leftmost", "move current column to leftmost position");
@@ -243,6 +257,12 @@ pub fn builtin_commands() -> CommandRegistry {
     reg.add("g\\", "unselect-cols-regex", "unselect rows matching regex in any visible column");
     reg.add(",", "select-equal-cell", "select rows equal to current cell value");
     reg.add("g,", "select-equal-row", "select rows equal to entire current row");
+    reg.add("zs", "select-before", "select rows before cursor");
+    reg.add("zt", "stoggle-before", "toggle selection of rows before cursor");
+    reg.add("zu", "unselect-before", "unselect rows before cursor");
+    reg.add("gzs", "select-after", "select rows from cursor to end");
+    reg.add("gzt", "stoggle-after", "toggle selection of rows from cursor to end");
+    reg.add("gzu", "unselect-after", "unselect rows from cursor to end");
 
     // Search
     reg.add("/", "search-col", "search forward in current column");
@@ -263,6 +283,13 @@ pub fn builtin_commands() -> CommandRegistry {
     reg.add("z\"", "dup-selected-deep", "push deep copy of selected rows");
     reg.add("gz\"", "dup-rows-deep", "push deep copy of all rows");
     reg.add("F", "freq-col", "frequency table for current column");
+    reg.add("gF", "freq-keys", "frequency table for all key columns");
+    reg.add("zF", "freq-summary", "one-line frequency summary in status bar");
+    reg.add("gI", "describe-all", "describe all open sheets");
+    reg.add("", "join-type-inner", "join sheets (inner)");
+    reg.add("", "join-type-left",  "join sheets (left outer)");
+    reg.add("", "join-type-right", "join sheets (right outer)");
+    reg.add("", "join-type-outer", "join sheets (full outer)");
 
     // Sheet types
     reg.add("C", "columns-sheet", "show columns of current sheet");
@@ -293,6 +320,7 @@ pub fn builtin_commands() -> CommandRegistry {
     reg.add("zd", "delete-cell", "set current cell to null");
     reg.add("gzd", "delete-cells", "set selected rows' current column to null");
     reg.add("f", "fill-down", "fill null cells downward with last non-null value");
+    reg.add("ga", "add-rows", "add N blank rows");
 
     // Undo / Redo
     reg.add("", "undo", "undo last edit (Ctrl+Z)");
@@ -305,6 +333,7 @@ pub fn builtin_commands() -> CommandRegistry {
     reg.add("gp", "paste-after", "paste row(s) after cursor");
     reg.add("x", "cut-row", "cut current row (yank and delete)");
     reg.add("gx", "cut-selected", "cut selected rows (yank and delete)");
+    reg.add("zx", "cut-cell", "cut current cell (yank and set null)");
 
     // Aggregation
     reg.add("+", "aggregate-col", "show aggregation for current column");
@@ -321,6 +350,7 @@ pub fn builtin_commands() -> CommandRegistry {
     // TUI
     reg.add("", "redraw", "force full terminal redraw (Ctrl+L)");
     reg.add("", "reload-sheet", "reload sheet from source file (Ctrl+R)");
+    reg.add("", "error-recent", "show most recent error (Ctrl+E)");
 
     // Macros
     reg.add("Q", "macro-record-toggle", "start/stop macro recording");

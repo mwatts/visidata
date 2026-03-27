@@ -1,4 +1,5 @@
 pub mod arrow_util;
+mod arrow_loader;
 mod csv_loader;
 mod excel_loader;
 pub mod ext_discovery;
@@ -10,8 +11,10 @@ mod parquet_loader;
 mod registry;
 mod saver;
 mod sqlite_loader;
+mod toml_loader;
 mod yaml_loader;
 
+pub use arrow_loader::ArrowLoader;
 pub use csv_loader::{CsvLoader, load_delimited_from_str};
 pub use excel_loader::{ExcelLoader, load_worksheet};
 pub use ext_loader::{ExtLoader, ExtLoaderRegistry};
@@ -22,5 +25,6 @@ pub use parquet_loader::ParquetLoader;
 pub use registry::{Loader, LoaderRegistry};
 pub use saver::save_sheet;
 pub use sqlite_loader::{SqliteLoader, load_table};
+pub use toml_loader::{TomlLoader, load_toml_from_str};
 pub use visidata_core;
 pub use yaml_loader::{YamlLoader, load_yaml_from_str};

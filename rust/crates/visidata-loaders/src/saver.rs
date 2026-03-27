@@ -22,6 +22,9 @@ pub fn save_sheet(sheet: &Sheet, path: &Path) -> Result<()> {
         "csv" => save_delimited(sheet, path, b','),
         "tsv" | "tab" => save_delimited(sheet, path, b'\t'),
         "json" => save_json(sheet, path),
+        "yaml" | "yml" => save_yaml(sheet, path),
+        "htm" | "html" => save_html(sheet, path),
+        "parquet" => save_parquet(sheet, path),
         _ => anyhow::bail!("no saver for extension: .{ext}"),
     }
 }
@@ -79,6 +82,142 @@ fn save_json(sheet: &Sheet, path: &Path) -> Result<()> {
         .with_context(|| format!("failed to create {}", path.display()))?;
     file.write_all(json.as_bytes())
         .with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(())
+}
+
+/// Save a sheet as YAML (sequence of maps).
+fn save_yaml(sheet: &Sheet, path: &Path) -> Result<()> {
+    let visible = sheet.visible_columns();
+    let rows: Vec<serde_yaml::Value> = sheet.rows.iter().map(|row| {
+        let mut map = serde_yaml::Mapping::new();
+        for col in &visible {
+            let key = serde_yaml::Value::String(col.name.clone());
+            let val = match col.typed_value(row) {
+                visidata_core::Value::Null    => serde_yaml::Value::Null,
+                visidata_core::Value::Bool(b) => serde_yaml::Value::Bool(b),
+                visidata_core::Value::Int(n)  => serde_yaml::Value::Number(n.into()),
+                visidata_core::Value::Float(f) => serde_yaml::Value::String(f.to_string()),
+                other => serde_yaml::Value::String(other.to_string()),
+            };
+            map.insert(key, val);
+        }
+        serde_yaml::Value::Mapping(map)
+    }).collect();
+
+    let yaml = serde_yaml::to_string(&serde_yaml::Value::Sequence(rows))
+        .context("failed to serialize YAML")?;
+    std::fs::write(path, yaml)
+        .with_context(|| format!("failed to write {}", path.display()))
+}
+
+/// Save a sheet as an HTML table.
+fn save_html(sheet: &Sheet, path: &Path) -> Result<()> {
+    use std::fmt::Write as FmtWrite;
+    let visible = sheet.visible_columns();
+    let mut html = String::new();
+    writeln!(html, "<table>").unwrap();
+    writeln!(html, "<thead><tr>").unwrap();
+    for col in &visible {
+        writeln!(html, "  <th>{}</th>", html_escape(&col.name)).unwrap();
+    }
+    writeln!(html, "</tr></thead>").unwrap();
+    writeln!(html, "<tbody>").unwrap();
+    for row in &sheet.rows {
+        writeln!(html, "<tr>").unwrap();
+        for col in &visible {
+            writeln!(html, "  <td>{}</td>", html_escape(&col.display_value(row))).unwrap();
+        }
+        writeln!(html, "</tr>").unwrap();
+    }
+    writeln!(html, "</tbody>").unwrap();
+    writeln!(html, "</table>").unwrap();
+    std::fs::write(path, html)
+        .with_context(|| format!("failed to write {}", path.display()))
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+     .replace('<', "&lt;")
+     .replace('>', "&gt;")
+     .replace('"', "&quot;")
+}
+
+/// Save a sheet as Parquet via Arrow.
+fn save_parquet(sheet: &Sheet, path: &Path) -> Result<()> {
+    use std::sync::Arc;
+    use arrow::array::{ArrayRef, Float64Builder, Int64Builder, BooleanBuilder, StringBuilder};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use parquet::arrow::ArrowWriter;
+
+    let visible = sheet.visible_columns();
+
+    // Infer Arrow schema from column types
+    let fields: Vec<Field> = visible.iter().map(|col| {
+        let dt = match col.col_type {
+            visidata_core::ColumnType::Int      => DataType::Int64,
+            visidata_core::ColumnType::Float
+            | visidata_core::ColumnType::Currency => DataType::Float64,
+            visidata_core::ColumnType::Bool     => DataType::Boolean,
+            _ => DataType::Utf8,
+        };
+        Field::new(&col.name, dt, true)
+    }).collect();
+    let schema = Arc::new(Schema::new(fields));
+
+    // Build arrays
+    let arrays: Vec<ArrayRef> = visible.iter().map(|col| {
+        match col.col_type {
+            visidata_core::ColumnType::Int => {
+                let mut b = Int64Builder::new();
+                for row in &sheet.rows {
+                    match col.typed_value(row) {
+                        visidata_core::Value::Int(n) => b.append_value(n),
+                        _ => b.append_null(),
+                    }
+                }
+                Arc::new(b.finish()) as ArrayRef
+            }
+            visidata_core::ColumnType::Float | visidata_core::ColumnType::Currency => {
+                let mut b = Float64Builder::new();
+                for row in &sheet.rows {
+                    match col.typed_value(row) {
+                        visidata_core::Value::Float(f) => b.append_value(f),
+                        #[expect(clippy::cast_precision_loss, reason = "i64→f64 coercion acceptable for parquet export")]
+                        visidata_core::Value::Int(n) => b.append_value(n as f64),
+                        _ => b.append_null(),
+                    }
+                }
+                Arc::new(b.finish()) as ArrayRef
+            }
+            visidata_core::ColumnType::Bool => {
+                let mut b = BooleanBuilder::new();
+                for row in &sheet.rows {
+                    match col.typed_value(row) {
+                        visidata_core::Value::Bool(v) => b.append_value(v),
+                        _ => b.append_null(),
+                    }
+                }
+                Arc::new(b.finish()) as ArrayRef
+            }
+            _ => {
+                let mut b = StringBuilder::new();
+                for row in &sheet.rows {
+                    b.append_value(col.display_value(row));
+                }
+                Arc::new(b.finish()) as ArrayRef
+            }
+        }
+    }).collect();
+
+    let batch = arrow::record_batch::RecordBatch::try_new(schema.clone(), arrays)
+        .context("failed to build Arrow RecordBatch")?;
+
+    let file = std::fs::File::create(path)
+        .with_context(|| format!("failed to create {}", path.display()))?;
+    let mut writer = ArrowWriter::try_new(file, schema, None)
+        .context("failed to create Parquet writer")?;
+    writer.write(&batch).context("failed to write Parquet batch")?;
+    writer.close().context("failed to close Parquet writer")?;
     Ok(())
 }
 

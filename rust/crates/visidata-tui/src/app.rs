@@ -58,6 +58,18 @@ enum InputMode {
     SelectColRegex { editor: LineEditor, select: bool },
     /// Select/unselect rows matching regex in any visible column (`g|` / `g\`).
     SelectAllColsRegex { editor: LineEditor, select: bool },
+    /// Go to row by number (`zr`).
+    GotoRow(LineEditor),
+    /// Go to column by regex name match (`c`).
+    GotoColRegex(LineEditor),
+    /// Go to column by index (`zc`).
+    GotoColNumber(LineEditor),
+    /// Set all selected rows' current column to a typed value (`ge`).
+    SetColInput(LineEditor),
+    /// Resize column to a specific width (`z_`).
+    ResizeColInput(LineEditor),
+    /// Add N blank rows (`ga`).
+    AddRowsInput(LineEditor),
     /// Command palette (fuzzy search by longname).
     CommandPalette(LineEditor),
     /// Menu navigation mode.
@@ -111,8 +123,8 @@ pub struct App {
     /// Clipboard for yank/paste.
     clipboard: Clipboard,
 
-    /// Pending single-char prefix for multi-key bindings (e.g., 'g' in 'gd').
-    pending_prefix: Option<char>,
+    /// Pending prefix for multi-key bindings (e.g., "g" in "gd", "gz" in "gzd").
+    pending_prefix: Option<String>,
 
     /// Macro recorder — accumulates keystrokes while recording.
     macro_recorder: visidata_core::macros::MacroRecorder,
@@ -125,6 +137,15 @@ pub struct App {
 
     /// Redo stack: actions popped by undo, waiting to be re-applied.
     redo_stack: Vec<visidata_core::undo::UndoAction>,
+
+    /// Index of the previously active sheet (for Ctrl+^ jump-prev).
+    prev_sheet_idx: Option<usize>,
+
+    /// Recent error messages (capped at 50) for the error sheet.
+    last_errors: std::collections::VecDeque<String>,
+
+    /// Whether quitguard is waiting for a second `q` press.
+    pending_quit: bool,
 }
 
 impl App {
@@ -148,11 +169,14 @@ impl App {
             menu_bar: builtin_menu_bar(),
             menu_state: MenuState::new(),
             clipboard: Clipboard::new(),
-            pending_prefix: None,
+            pending_prefix: None::<String>,
             macro_recorder: visidata_core::macros::MacroRecorder::new(),
             macro_store: visidata_core::macros::MacroStore::new(),
             macro_replay: vec![],
             redo_stack: vec![],
+            prev_sheet_idx: None,
+            last_errors: std::collections::VecDeque::new(),
+            pending_quit: false,
         }
     }
 
@@ -213,6 +237,12 @@ impl App {
                         | InputMode::SearchBackwardAllCols(_)
                         | InputMode::SelectColRegex { .. }
                         | InputMode::SelectAllColsRegex { .. }
+                        | InputMode::GotoRow(_)
+                        | InputMode::GotoColRegex(_)
+                        | InputMode::GotoColNumber(_)
+                        | InputMode::SetColInput(_)
+                        | InputMode::ResizeColInput(_)
+                        | InputMode::AddRowsInput(_)
                         | InputMode::CommandPalette(_) => self.handle_input_key(key),
                     },
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
@@ -310,6 +340,12 @@ impl App {
                     let prefix = if *select { "g|" } else { "g\\" };
                     Some(format!("{prefix}{}", editor.text()))
                 }
+                InputMode::GotoRow(editor) => Some(format!("go to row: {}", editor.text())),
+                InputMode::GotoColRegex(editor) => Some(format!("go to column: {}", editor.text())),
+                InputMode::GotoColNumber(editor) => Some(format!("go to column #: {}", editor.text())),
+                InputMode::SetColInput(editor) => Some(format!("set column: {}", editor.text())),
+                InputMode::ResizeColInput(editor) => Some(format!("column width: {}", editor.text())),
+                InputMode::AddRowsInput(editor) => Some(format!("add N rows: {}", editor.text())),
                 // These modes render as overlays; suppress the inline input bar.
                 InputMode::Normal
                 | InputMode::CommandPalette(_)
@@ -389,11 +425,24 @@ impl App {
             return;
         }
 
+        // Ctrl+^ = jump to previous sheet
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('^') {
+            self.dispatch_command("jump-prev");
+            return;
+        }
+
+        // Ctrl+E = error sheet
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('e') {
+            self.dispatch_command("error-recent");
+            return;
+        }
+
         // Handle pending prefix (g/z/gz-prefixed commands)
         if let Some(prefix) = self.pending_prefix.take() {
+            let prefix = prefix.as_str();
             match (prefix, key.code) {
                 // --- g-prefixed ---
-                ('g', KeyCode::Char('d')) => {
+                ("g", KeyCode::Char('d')) => {
                     if let Some(s) = self.stack.active_mut() {
                         let count = s.delete_selected_rows();
                         self.status = format!("deleted {count} rows");
@@ -401,7 +450,15 @@ impl App {
                     self.update_status();
                     return;
                 }
-                ('g', KeyCode::Char('j')) => {
+                ("g", KeyCode::Char('e')) => {
+                    self.mode = InputMode::SetColInput(LineEditor::new(""));
+                    return;
+                }
+                ("g", KeyCode::Char('^')) => {
+                    self.dispatch_command("rename-cols-row");
+                    return;
+                }
+                ("g", KeyCode::Char('j')) => {
                     if let Some(s) = self.stack.active_mut()
                         && !s.rows.is_empty()
                     {
@@ -410,7 +467,7 @@ impl App {
                     self.update_status();
                     return;
                 }
-                ('g', KeyCode::Char('k')) => {
+                ("g", KeyCode::Char('k')) => {
                     if let Some(s) = self.stack.active_mut() {
                         s.cursor_row = 0;
                         s.top_row = 0;
@@ -418,7 +475,15 @@ impl App {
                     self.update_status();
                     return;
                 }
-                ('g', KeyCode::Char('s')) => {
+                ("g", KeyCode::Char('F')) => {
+                    self.dispatch_command("freq-keys");
+                    return;
+                }
+                ("g", KeyCode::Char('I')) => {
+                    self.dispatch_command("describe-all");
+                    return;
+                }
+                ("g", KeyCode::Char('s')) => {
                     if let Some(s) = self.stack.active_mut() {
                         s.select_all();
                         self.status = format!("selected {} rows", s.rows.len());
@@ -426,90 +491,90 @@ impl App {
                     self.update_status();
                     return;
                 }
-                ('g', KeyCode::Char('u')) => {
+                ("g", KeyCode::Char('u')) => {
                     if let Some(s) = self.stack.active_mut() {
                         s.unselect_all();
                     }
                     self.update_status();
                     return;
                 }
-                ('g', KeyCode::Char('t')) => {
+                ("g", KeyCode::Char('t')) => {
                     if let Some(s) = self.stack.active_mut() {
                         s.toggle_select_all();
                     }
                     self.update_status();
                     return;
                 }
-                ('g', KeyCode::Char('H')) => {
+                ("g", KeyCode::Char('H')) => {
                     self.dispatch_command("slide-leftmost");
                     return;
                 }
-                ('g', KeyCode::Char('L')) => {
+                ("g", KeyCode::Char('L')) => {
                     self.dispatch_command("slide-rightmost");
                     return;
                 }
-                ('g', KeyCode::Char('J')) => {
+                ("g", KeyCode::Char('J')) => {
                     self.dispatch_command("slide-row-bottom");
                     return;
                 }
-                ('g', KeyCode::Char('K')) => {
+                ("g", KeyCode::Char('K')) => {
                     self.dispatch_command("slide-row-top");
                     return;
                 }
-                ('g', KeyCode::Char('x')) => {
+                ("g", KeyCode::Char('x')) => {
                     self.dispatch_command("cut-selected");
                     return;
                 }
-                ('g', KeyCode::Char('y')) => {
+                ("g", KeyCode::Char('y')) => {
                     self.dispatch_command("yank-row");
                     return;
                 }
-                ('g', KeyCode::Char('p')) => {
+                ("g", KeyCode::Char('p')) => {
                     self.dispatch_command("paste-after");
                     return;
                 }
-                ('g', KeyCode::Char('_')) => {
+                ("g", KeyCode::Char('_')) => {
                     self.dispatch_command("resize-cols-max");
                     return;
                 }
-                ('g', KeyCode::Char('v')) => {
+                ("g", KeyCode::Char('v')) => {
                     self.dispatch_command("unhide-cols");
                     return;
                 }
-                ('g', KeyCode::Char('[')) => {
+                ("g", KeyCode::Char('[')) => {
                     self.dispatch_command("sort-keys-asc");
                     return;
                 }
-                ('g', KeyCode::Char(']')) => {
+                ("g", KeyCode::Char(']')) => {
                     self.dispatch_command("sort-keys-desc");
                     return;
                 }
-                ('g', KeyCode::Char('"')) => {
+                ("g", KeyCode::Char('"')) => {
                     self.dispatch_command("dup-rows");
                     return;
                 }
-                ('g', KeyCode::Char('/')) => {
+                ("g", KeyCode::Char('/')) => {
                     self.mode =
                         InputMode::SearchForwardAllCols(LineEditor::new(""));
                     return;
                 }
-                ('g', KeyCode::Char('?')) => {
+                ("g", KeyCode::Char('?')) => {
                     self.mode =
                         InputMode::SearchBackwardAllCols(LineEditor::new(""));
                     return;
                 }
-                ('g', KeyCode::Char(',')) => {
+                ("g", KeyCode::Char(',')) => {
                     self.dispatch_command("select-equal-row");
                     return;
                 }
-                ('g', KeyCode::Char('|')) => {
+                ("g", KeyCode::Char('|')) => {
                     self.mode = InputMode::SelectAllColsRegex {
                         editor: LineEditor::new(""),
                         select: true,
                     };
                     return;
                 }
-                ('g', KeyCode::Char('\\')) => {
+                ("g", KeyCode::Char('\\')) => {
                     self.mode = InputMode::SelectAllColsRegex {
                         editor: LineEditor::new(""),
                         select: false,
@@ -518,20 +583,87 @@ impl App {
                 }
 
                 // --- z-prefixed ---
-                ('z', KeyCode::Char('z')) => {
+                ("z", KeyCode::Char('z')) => {
                     self.dispatch_command("scroll-middle");
                     return;
                 }
-                ('z', KeyCode::Char('d')) => {
+                ("z", KeyCode::Char('d')) => {
                     self.dispatch_command("delete-cell");
                     return;
                 }
-                ('z', KeyCode::Char('[')) => {
+                ("z", KeyCode::Char('[')) => {
                     self.dispatch_command("sort-asc-add");
                     return;
                 }
-                ('z', KeyCode::Char(']')) => {
+                ("z", KeyCode::Char(']')) => {
                     self.dispatch_command("sort-desc-add");
+                    return;
+                }
+                ("z", KeyCode::Char('F')) => {
+                    self.dispatch_command("freq-summary");
+                    return;
+                }
+                ("z", KeyCode::Char('r')) => {
+                    self.mode = InputMode::GotoRow(LineEditor::new(""));
+                    return;
+                }
+                ("z", KeyCode::Char('c')) => {
+                    self.mode = InputMode::GotoColNumber(LineEditor::new(""));
+                    return;
+                }
+                ("z", KeyCode::Char('_')) => {
+                    self.mode = InputMode::ResizeColInput(LineEditor::new(""));
+                    return;
+                }
+                ("z", KeyCode::Char('a')) => {
+                    self.mode = InputMode::AddRowsInput(LineEditor::new(""));
+                    return;
+                }
+                ("z", KeyCode::Char('s')) => {
+                    self.dispatch_command("select-before");
+                    return;
+                }
+                ("z", KeyCode::Char('t')) => {
+                    self.dispatch_command("stoggle-before");
+                    return;
+                }
+                ("z", KeyCode::Char('u')) => {
+                    self.dispatch_command("unselect-before");
+                    return;
+                }
+                ("z", KeyCode::Char('^')) => {
+                    self.dispatch_command("rename-col-selected");
+                    return;
+                }
+                ("z", KeyCode::Char('x')) => {
+                    self.dispatch_command("cut-cell");
+                    return;
+                }
+
+                // gz-prefixed commands
+                ("gz", KeyCode::Char('s')) => {
+                    self.dispatch_command("select-after");
+                    return;
+                }
+                ("gz", KeyCode::Char('t')) => {
+                    self.dispatch_command("stoggle-after");
+                    return;
+                }
+                ("gz", KeyCode::Char('u')) => {
+                    self.dispatch_command("unselect-after");
+                    return;
+                }
+                ("gz", KeyCode::Char('d')) => {
+                    self.dispatch_command("delete-cells");
+                    return;
+                }
+                ("gz", KeyCode::Char('"')) => {
+                    self.dispatch_command("dup-rows-deep");
+                    return;
+                }
+                // g+z chains into gz prefix
+                ("g", KeyCode::Char('z')) => {
+                    self.pending_prefix = Some("gz".into());
                     return;
                 }
 
@@ -560,12 +692,10 @@ impl App {
         let height = crossterm::terminal::size().map_or(20, |(_, h)| h as usize);
 
         match key.code {
-            // Quit / pop sheet
+            // Quit / pop sheet (dispatched so quitguard is respected)
             KeyCode::Char('q') => {
-                self.stack.pop();
-                if self.stack.is_empty() {
-                    self.running = false;
-                }
+                self.dispatch_command("quit-sheet");
+                return;
             }
 
             // Cursor movement
@@ -585,11 +715,11 @@ impl App {
             }
             // 'g' and 'z' set pending prefix for multi-key bindings
             KeyCode::Char('g') => {
-                self.pending_prefix = Some('g');
+                self.pending_prefix = Some("g".into());
                 return;
             }
             KeyCode::Char('z') => {
-                self.pending_prefix = Some('z');
+                self.pending_prefix = Some("z".into());
                 return;
             }
             KeyCode::End => {
@@ -723,6 +853,12 @@ impl App {
                 return;
             }
 
+            // --- Navigation: go to column by regex ---
+            KeyCode::Char('c') => {
+                self.mode = InputMode::GotoColRegex(LineEditor::new(""));
+                return;
+            }
+
             // --- Navigation: go to different/selected value ---
             KeyCode::Char('<') => {
                 self.dispatch_command("go-prev-value");
@@ -828,6 +964,18 @@ impl App {
             KeyCode::Char('M') => {
                 let melted = visidata_core::sheets::melt_sheet(sheet);
                 self.stack.push(melted);
+            }
+            KeyCode::Char('T') => {
+                self.dispatch_command("transpose");
+                return;
+            }
+            KeyCode::Char('\'') => {
+                self.dispatch_command("freeze-col");
+                return;
+            }
+            KeyCode::Char('i') => {
+                self.dispatch_command("addcol-incr");
+                return;
             }
 
             // --- Frequency table ---
@@ -1142,6 +1290,109 @@ impl App {
                     self.mode = InputMode::CommandPalette(editor);
                 }
             },
+            InputMode::GotoRow(mut editor) => match editor.handle_key(&key_str) {
+                EditResult::Accept(s) => {
+                    if let Ok(n) = s.parse::<usize>() {
+                        if let Some(sheet) = self.stack.active_mut() {
+                            sheet.cursor_row = n.min(sheet.rows.len().saturating_sub(1));
+                        }
+                    } else {
+                        self.status = format!("invalid row number: {s}");
+                    }
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Cancel => self.mode = InputMode::Normal,
+                EditResult::Continue => self.mode = InputMode::GotoRow(editor),
+            },
+            InputMode::GotoColRegex(mut editor) => match editor.handle_key(&key_str) {
+                EditResult::Accept(pattern) => {
+                    if let Some(sheet) = self.stack.active_mut() {
+                        if let Ok(re) = regex::Regex::new(&pattern) {
+                            let found = sheet.visible_columns().iter().enumerate()
+                                .find(|(_, c)| re.is_match(&c.name))
+                                .map(|(i, _): (usize, _)| i);
+                            if let Some(idx) = found {
+                                sheet.cursor_col = idx;
+                            } else {
+                                self.status = format!("no column matching: {pattern}");
+                            }
+                        } else {
+                            self.status = format!("invalid regex: {pattern}");
+                        }
+                    }
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Cancel => self.mode = InputMode::Normal,
+                EditResult::Continue => self.mode = InputMode::GotoColRegex(editor),
+            },
+            InputMode::GotoColNumber(mut editor) => match editor.handle_key(&key_str) {
+                EditResult::Accept(s) => {
+                    if let Ok(n) = s.parse::<usize>() {
+                        if let Some(sheet) = self.stack.active_mut() {
+                            let max = sheet.visible_columns().len().saturating_sub(1);
+                            sheet.cursor_col = n.min(max);
+                        }
+                    } else {
+                        self.status = format!("invalid column number: {s}");
+                    }
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Cancel => self.mode = InputMode::Normal,
+                EditResult::Continue => self.mode = InputMode::GotoColNumber(editor),
+            },
+            InputMode::SetColInput(mut editor) => match editor.handle_key(&key_str) {
+                EditResult::Accept(new_val) => {
+                    if let Some(sheet) = self.stack.active_mut()
+                        && let Some(col_idx) = resolve_cursor_col_idx(sheet)
+                    {
+                        let source_idx = sheet.columns[col_idx].source_idx;
+                        let value = visidata_core::Value::Text(new_val);
+                        let selected: Vec<usize> = sheet.rows.iter().enumerate()
+                            .filter(|(_, r)| r.selected)
+                            .map(|(i, _)| i)
+                            .collect();
+                        let count = selected.len();
+                        for idx in selected {
+                            sheet.set_cell(idx, source_idx, value.clone());
+                        }
+                        self.status = format!("set {count} rows");
+                    }
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Cancel => self.mode = InputMode::Normal,
+                EditResult::Continue => self.mode = InputMode::SetColInput(editor),
+            },
+            InputMode::ResizeColInput(mut editor) => match editor.handle_key(&key_str) {
+                EditResult::Accept(s) => {
+                    if let Ok(w) = s.parse::<u16>() {
+                        if let Some(sheet) = self.stack.active_mut()
+                            && let Some(col_idx) = resolve_cursor_col_idx(sheet)
+                        {
+                            sheet.columns[col_idx].width = Some(w);
+                        }
+                    } else {
+                        self.status = format!("invalid width: {s}");
+                    }
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Cancel => self.mode = InputMode::Normal,
+                EditResult::Continue => self.mode = InputMode::ResizeColInput(editor),
+            },
+            InputMode::AddRowsInput(mut editor) => match editor.handle_key(&key_str) {
+                EditResult::Accept(s) => {
+                    let n = s.parse::<usize>().unwrap_or(1);
+                    if let Some(sheet) = self.stack.active_mut() {
+                        let at = sheet.cursor_row;
+                        for i in 0..n {
+                            sheet.insert_row_at(at + i);
+                        }
+                        self.status = format!("added {n} rows");
+                    }
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Cancel => self.mode = InputMode::Normal,
+                EditResult::Continue => self.mode = InputMode::AddRowsInput(editor),
+            },
             InputMode::Normal | InputMode::Menu | InputMode::Help { .. } => unreachable!(),
         }
 
@@ -1154,10 +1405,21 @@ impl App {
             return;
         }
 
-        // Handle expression column: query starts with "="
-        if let Some(expr) = query.strip_prefix('=') {
+        // Handle expression column: "=expr" or "=name=expr"
+        if let Some(rest) = query.strip_prefix('=') {
             if let Some(sheet) = self.stack.active_mut() {
-                let col_name = format!("expr{}", sheet.columns.len());
+                // Check for =name=expr format
+                let (col_name, expr) = if let Some(eq_pos) = rest.find('=') {
+                    let name = rest[..eq_pos].trim().to_owned();
+                    let expr = &rest[eq_pos + 1..];
+                    if name.is_empty() {
+                        (format!("expr{}", sheet.columns.len()), rest)
+                    } else {
+                        (name, expr)
+                    }
+                } else {
+                    (format!("expr{}", sheet.columns.len()), rest)
+                };
                 visidata_core::expr_column::add_expression_column(sheet, &col_name, expr);
                 self.status = format!("added column: {col_name}");
             }
@@ -1196,12 +1458,6 @@ impl App {
     fn dispatch_command(&mut self, longname: &str) {
         match longname {
             "help-commands" => self.show_help(),
-            "quit-sheet" => {
-                self.stack.pop();
-                if self.stack.is_empty() {
-                    self.running = false;
-                }
-            }
             "cursor-down" => {
                 if let Some(s) = self.stack.active_mut() {
                     s.cursor_down(1);
@@ -1809,6 +2065,220 @@ impl App {
             // --- Redo ---
             "redo" => self.do_redo(),
 
+            // --- Navigation ---
+            "go-screen-top" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.cursor_row = s.top_row;
+                }
+            }
+            "go-screen-middle" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let h = crossterm::terminal::size().map_or(20, |(_, h)| h as usize);
+                    s.cursor_row = (s.top_row + h / 2).min(s.rows.len().saturating_sub(1));
+                }
+            }
+            "go-screen-bottom" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let h = crossterm::terminal::size().map_or(20, |(_, h)| h as usize);
+                    s.cursor_row = (s.top_row + h.saturating_sub(3)).min(s.rows.len().saturating_sub(1));
+                }
+            }
+            "jump-prev" => self.jump_prev_sheet(),
+
+            // --- Selection before/after cursor ---
+            "select-before" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let cur = s.cursor_row;
+                    for row in &mut s.rows[..cur] { row.selected = true; }
+                }
+            }
+            "stoggle-before" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let cur = s.cursor_row;
+                    for row in &mut s.rows[..cur] { row.selected = !row.selected; }
+                }
+            }
+            "unselect-before" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let cur = s.cursor_row;
+                    for row in &mut s.rows[..cur] { row.selected = false; }
+                }
+            }
+            "select-after" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let cur = s.cursor_row;
+                    for row in &mut s.rows[cur..] { row.selected = true; }
+                }
+            }
+            "stoggle-after" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let cur = s.cursor_row;
+                    for row in &mut s.rows[cur..] { row.selected = !row.selected; }
+                }
+            }
+            "unselect-after" => {
+                if let Some(s) = self.stack.active_mut() {
+                    let cur = s.cursor_row;
+                    for row in &mut s.rows[cur..] { row.selected = false; }
+                }
+            }
+
+            // --- Column operations ---
+            "rename-col-selected" => {
+                // Rename current column to the value of the first selected row in that col
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    let new_name = s.rows.iter()
+                        .find(|r| r.selected)
+                        .map(|r| s.columns[col_idx].display_value(r));
+                    if let Some(name) = new_name {
+                        let col_id = s.columns[col_idx].id.0;
+                        s.rename_column(col_id, name);
+                    } else {
+                        self.status = "no selected rows".into();
+                    }
+                }
+            }
+            "rename-cols-row" => {
+                // Rename all visible cols using current row values
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                {
+                    let cur = s.cursor_row;
+                    let renames: Vec<(usize, String)> = s.columns.iter()
+                        .enumerate()
+                        .filter(|(_, c)| !c.is_hidden())
+                        .map(|(i, c)| (i, c.display_value(&s.rows[cur])))
+                        .collect();
+                    for (i, name) in renames {
+                        let col_id = s.columns[i].id.0;
+                        s.rename_column(col_id, name);
+                    }
+                }
+            }
+            "cut-cell" => {
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    let source_idx = s.columns[col_idx].source_idx;
+                    let val = s.rows[s.cursor_row].get(source_idx).clone();
+                    self.clipboard.yank_cell(val);
+                    s.set_cell(s.cursor_row, source_idx, visidata_core::Value::Null);
+                    self.status = "cut cell".into();
+                }
+            }
+
+            // --- Transpose ---
+            "transpose" => {
+                if let Some(s) = self.stack.active() {
+                    let t = visidata_core::sheets::transpose_sheet(s);
+                    self.stack.push(t);
+                }
+            }
+            // --- Freeze column ---
+            "freeze-col" => {
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    visidata_core::sheets::freeze_column(s, col_idx);
+                    self.status = "column frozen".into();
+                }
+            }
+            // --- Add incremental column ---
+            "addcol-incr" => {
+                if let Some(s) = self.stack.active_mut() {
+                    visidata_core::sheets::add_incr_column(s, 1, 1);
+                }
+            }
+            // --- Frequency for all key cols ---
+            "freq-keys" => {
+                if let Some(s) = self.stack.active() {
+                    let key_indices: Vec<usize> = s.columns.iter().enumerate()
+                        .filter(|(_, c)| c.is_key)
+                        .map(|(i, _)| i)
+                        .collect();
+                    if key_indices.is_empty() {
+                        self.status = "no key columns".into();
+                    } else {
+                        // Frequency on first key column for now
+                        let freq = s.frequency_sheet(key_indices[0]);
+                        self.stack.push(freq);
+                    }
+                }
+            }
+            // --- One-line frequency summary ---
+            "freq-summary" => {
+                if let Some(s) = self.stack.active()
+                    && let Some(col_idx) = resolve_cursor_col_idx(s)
+                {
+                    let col = &s.columns[col_idx];
+                    let total = s.rows.len();
+                    let mut counts = std::collections::HashMap::<String, usize>::new();
+                    for row in &s.rows {
+                        *counts.entry(col.display_value(row)).or_insert(0) += 1;
+                    }
+                    let distinct = counts.len();
+                    let top = counts.iter().max_by_key(|(_, n)| *n)
+                        .map(|(v, n)| format!("{v}({n})"))
+                        .unwrap_or_default();
+                    self.status = format!("{distinct} distinct / {total} total / top: {top}");
+                }
+            }
+            // --- Join type picker ---
+            "join-type-inner" => self.join_with_type(visidata_core::sheets::JoinType::Inner),
+            "join-type-left"  => self.join_with_type(visidata_core::sheets::JoinType::Left),
+            "join-type-right" => self.join_with_type(visidata_core::sheets::JoinType::Right),
+            "join-type-outer" => self.join_with_type(visidata_core::sheets::JoinType::Outer),
+
+            // --- Describe all sheets ---
+            "describe-all" => {
+                let all: Vec<&Sheet> = self.stack.iter().collect();
+                if all.is_empty() {
+                    return;
+                }
+                // Build a combined describe sheet
+                let first = visidata_core::sheets::describe_sheet(all[0]);
+                let mut combined = first;
+                for s in all.iter().skip(1) {
+                    let d = visidata_core::sheets::describe_sheet(s);
+                    combined.rows.extend(d.rows);
+                }
+                combined.name = "describe_all".into();
+                self.stack.push(combined);
+            }
+
+            // --- quitguard ---
+            "quit-sheet" => {
+                let guard = self.options.get_global("quitguard");
+                let modified = self.stack.active().is_some_and(|s| s.modified);
+                if matches!(guard, visidata_core::Value::Bool(true)) && modified {
+                    if self.pending_quit {
+                        self.stack.pop();
+                        self.pending_quit = false;
+                        if self.stack.is_empty() { self.running = false; }
+                    } else {
+                        self.pending_quit = true;
+                        self.status = "sheet modified — press q again to quit".into();
+                    }
+                } else {
+                    self.pending_quit = false;
+                    self.stack.pop();
+                    if self.stack.is_empty() { self.running = false; }
+                }
+            }
+
+            // --- Error sheet ---
+            "error-recent" => {
+                if let Some(err) = self.last_errors.back().cloned() {
+                    let sheet = visidata_core::sheets::text_sheet("error", &err);
+                    self.stack.push(sheet);
+                } else {
+                    self.status = "no errors".into();
+                }
+            }
+
             // --- TUI ---
             "redraw" => {
                 // Handled externally by the event loop — just mark for redraw.
@@ -1876,6 +2346,15 @@ impl App {
                 visidata_core::undo::UndoAction::SetColType { col_id, old_type } => {
                     if let Some(col) = sheet.columns.iter_mut().find(|c| c.id.0 == col_id) {
                         col.col_type = old_type;
+                    }
+                }
+                visidata_core::undo::UndoAction::ReorderRows { order } => {
+                    let mut by_id: std::collections::HashMap<_, _> =
+                        sheet.rows.drain(..).map(|r| (r.id, r)).collect();
+                    for id in order {
+                        if let Some(row) = by_id.remove(&id) {
+                            sheet.rows.push(row);
+                        }
                     }
                 }
             }
@@ -1964,6 +2443,14 @@ impl App {
                 let _ = col_id;
                 self.redo_stack.push(action);
                 self.status = "redo not supported for type change yet".into();
+                return;
+            }
+            UndoAction::ReorderRows { .. } => {
+                // Redo a sort: re-apply the current sort keys
+                if let Some(s) = self.stack.active_mut() {
+                    s.resort();
+                }
+                self.status = "redone".into();
                 return;
             }
         }
@@ -2192,6 +2679,19 @@ impl App {
         }
     }
 
+    /// Join the top two sheets with the given join type.
+    fn join_with_type(&mut self, join_type: visidata_core::sheets::JoinType) {
+        let sheets: Vec<&Sheet> = self.stack.iter().collect();
+        if sheets.len() < 2 {
+            self.status = "need at least 2 sheets to join".into();
+            return;
+        }
+        let right = sheets[sheets.len() - 1];
+        let left = sheets[sheets.len() - 2];
+        let joined = visidata_core::sheets::join_sheets(left, right, join_type);
+        self.stack.push(joined);
+    }
+
     /// Join the top two sheets on the stack by key columns (inner join).
     fn join_top_two_sheets(&mut self) {
         let sheets: Vec<&Sheet> = self.stack.iter().collect();
@@ -2239,6 +2739,45 @@ impl App {
             }
         }
         self.update_status();
+    }
+
+    /// Push a sheet onto the stack, recording previous index for jump-prev.
+    #[expect(dead_code, reason = "will replace stack.push() calls in next batch")]
+    fn push_sheet(&mut self, sheet: Sheet) {
+        self.prev_sheet_idx = Some(self.stack.len().saturating_sub(1));
+        self.stack.push(sheet);
+    }
+
+    /// Jump to the previously active sheet (Ctrl+^).
+    fn jump_prev_sheet(&mut self) {
+        if let Some(prev) = self.prev_sheet_idx {
+            let cur = self.stack.len().saturating_sub(1);
+            if prev != cur && prev < self.stack.len() {
+                // Swap top with prev by rotating
+                self.prev_sheet_idx = Some(cur);
+                // Navigate: pop to prev if prev == cur-1, else just set active
+                // Simple approach: move cursor within the stack via pop/push
+                // For now, pop until we reach prev+1 sheets
+                while self.stack.len() > prev + 1 {
+                    self.stack.pop();
+                }
+            } else {
+                self.status = "no previous sheet".into();
+            }
+        } else {
+            self.status = "no previous sheet".into();
+        }
+    }
+
+    /// Record an error message for the error sheet.
+    #[expect(dead_code, reason = "will be called from error paths in next batch")]
+    fn record_error(&mut self, msg: impl Into<String>) {
+        let msg = msg.into();
+        self.last_errors.push_back(msg.clone());
+        if self.last_errors.len() > 50 {
+            self.last_errors.pop_front();
+        }
+        self.status = msg;
     }
 
     /// Reload the current sheet from its source file.

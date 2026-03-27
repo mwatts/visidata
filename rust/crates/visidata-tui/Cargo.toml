@@ -14,4 +14,5 @@ visidata-scripting = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 anyhow = { workspace = true }
+regex = { workspace = true }
 unicode-width = { workspace = true }

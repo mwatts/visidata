@@ -61,6 +61,8 @@ impl LoaderRegistry {
         registry.register(Box::new(super::ParquetLoader));
         registry.register(Box::new(super::HtmlLoader));
         registry.register(Box::new(super::FixedWidthLoader));
+        registry.register(Box::new(super::TomlLoader));
+        registry.register(Box::new(super::ArrowLoader));
 
         // Collect built-in extensions so external loaders can't shadow them.
         let builtin_exts: Vec<String> = registry
