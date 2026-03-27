@@ -379,6 +379,15 @@ impl App {
             return;
         }
 
+        // Enter = open-row (drill into table/view on index sheets).
+        // Must be handled before `active_mut()` borrow so we can call
+        // `dispatch_command` which needs `&mut self`.
+        if key.code == KeyCode::Enter {
+            self.dispatch_command("open-row");
+            self.update_status();
+            return;
+        }
+
         let Some(sheet) = self.stack.active_mut() else {
             self.running = false;
             return;
@@ -870,6 +879,20 @@ impl App {
             "cursor-left" => {
                 if let Some(s) = self.stack.active_mut() {
                     s.cursor_left(1);
+                }
+            }
+            "open-row" => {
+                // Clone the drill Arc and cursor row before any mutable borrow.
+                let maybe = self.stack.active().and_then(|s| {
+                    let drill = s.drill.clone()?;
+                    let row = s.rows.get(s.cursor_row).cloned()?;
+                    Some((drill, row))
+                });
+                if let Some((drill, row)) = maybe {
+                    match drill.open_row(&row) {
+                        Ok(child) => self.stack.push(child),
+                        Err(e) => self.status = format!("{e:#}"),
+                    }
                 }
             }
             "go-top" => {

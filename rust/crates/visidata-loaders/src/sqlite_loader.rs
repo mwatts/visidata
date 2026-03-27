@@ -1,10 +1,11 @@
 //! `SQLite` file loader.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
-use visidata_core::{Column, ColumnId, Row, Sheet, Value};
+use visidata_core::{Column, ColumnId, DrillAction, Row, Sheet, Value};
 
 use crate::registry::Loader;
 
@@ -23,6 +24,24 @@ impl Loader for SqliteLoader {
 
     fn load(&self, path: &Path) -> Result<Sheet> {
         load_table_index(path)
+    }
+}
+
+/// Drill-down action for `SQLite` index sheets.
+///
+/// Pressing Enter on a row opens that table as a new sheet via [`load_table`].
+#[derive(Debug)]
+struct SqliteDrill {
+    path: PathBuf,
+}
+
+impl DrillAction for SqliteDrill {
+    fn open_row(&self, row: &Row) -> anyhow::Result<Sheet> {
+        let name = match row.get(0) {
+            Value::Text(s) => s.clone(),
+            other => anyhow::bail!("expected table name in column 0, got {other:?}"),
+        };
+        load_table(&self.path, &name)
     }
 }
 
@@ -79,6 +98,7 @@ fn load_table_index(path: &Path) -> Result<Sheet> {
 
     let mut sheet = Sheet::with_data(name, columns, rows);
     sheet.source = Some(path.to_path_buf());
+    sheet.drill = Some(Arc::new(SqliteDrill { path: path.to_path_buf() }));
     Ok(sheet)
 }
 

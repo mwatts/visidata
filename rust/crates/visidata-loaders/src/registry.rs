@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use visidata_core::Sheet;
 
-use crate::ext_loader::{ExtLoader, ExtLoaderRegistry};
+use crate::ext_loader::{ExtDrill, ExtLoader, ExtLoaderRegistry};
 
 /// Trait for file format loaders.
 ///
@@ -114,7 +114,12 @@ impl LoaderRegistry {
 
         // External loaders second.
         if let Some(ext_loader) = self.find_ext_loader(ext) {
-            return ext_loader.load(path);
+            let mut sheet = ext_loader.load(path)?;
+            sheet.drill = Some(Arc::new(ExtDrill {
+                loader: Arc::clone(&ext_loader),
+                db_path: path.to_path_buf(),
+            }));
+            return Ok(sheet);
         }
 
         anyhow::bail!("no loader for extension: .{ext}")

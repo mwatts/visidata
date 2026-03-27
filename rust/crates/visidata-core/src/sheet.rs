@@ -1,11 +1,30 @@
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::async_loader::LoadingState;
 use crate::column::{Column, ColumnId};
 use crate::row::Row;
 use crate::undo::{UndoAction, UndoStack};
 use crate::value::Value;
+
+/// Callback invoked when the user presses Enter on a row in an index sheet.
+///
+/// Implementations live in `visidata-loaders` (`SQLite`, ext loaders, etc.).
+/// The trait is defined here so `Sheet` can hold it without a circular
+/// dependency between `visidata-core` and `visidata-loaders`.
+pub trait DrillAction: Send + Sync + fmt::Debug {
+    /// Open a child sheet for the given cursor row.
+    ///
+    /// Typically reads the table/view name from column 0 of `row` and
+    /// returns a fully loaded sheet for that table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the child sheet cannot be constructed (e.g. the
+    /// table does not exist or the subprocess fails).
+    fn open_row(&self, row: &Row) -> anyhow::Result<Sheet>;
+}
 
 /// Unique identifier for a sheet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -75,6 +94,10 @@ pub struct Sheet {
 
     /// Background loading state.
     pub loading_state: LoadingState,
+
+    /// Optional drill-down action: pressing Enter on a row calls this to open
+    /// a child sheet. Set by index-sheet builders (`SQLite`, ext loaders, etc.).
+    pub drill: Option<Arc<dyn DrillAction>>,
 }
 
 /// Global sheet ID counter.
@@ -103,6 +126,7 @@ impl Sheet {
             modified: false,
             undo_stack: UndoStack::new(),
             loading_state: LoadingState::default(),
+            drill: None,
         }
     }
 

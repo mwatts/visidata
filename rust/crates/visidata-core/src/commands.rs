@@ -191,6 +191,7 @@ pub fn builtin_commands() -> CommandRegistry {
 
     // Sheet
     reg.add("q", "quit-sheet", "quit current sheet");
+    reg.add("Enter", "open-row", "open current row as a sheet (drill into table/view)");
 
     // Column operations
     reg.add("_", "resize-col-max", "auto-fit column width");

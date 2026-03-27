@@ -3,13 +3,13 @@
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use arrow::ipc::reader::StreamReader;
-use visidata_core::{Column, ColumnId, Row, Sheet, Value};
+use visidata_core::{Column, ColumnId, DrillAction, Row, Sheet, Value};
 use visidata_ext_protocol::{ExtManifest, LoadRequest, Transport};
 
 use crate::arrow_util::arrow_value_at;
@@ -221,6 +221,30 @@ impl Loader for ExtLoader {
 
     fn load(&self, path: &Path) -> Result<Sheet> {
         self.run_query(path, None, HashMap::new())
+    }
+}
+
+/// Drill-down action for external-loader index sheets.
+///
+/// Pressing Enter on a row runs `SELECT * FROM "<name>"` via the same
+/// external loader binary that produced the index sheet.
+#[derive(Debug)]
+pub struct ExtDrill {
+    /// The external loader to invoke.
+    pub loader: Arc<ExtLoader>,
+    /// Absolute path to the database file.
+    pub db_path: PathBuf,
+}
+
+impl DrillAction for ExtDrill {
+    fn open_row(&self, row: &Row) -> anyhow::Result<Sheet> {
+        let name = match row.get(0) {
+            Value::Text(s) => s.clone(),
+            other => anyhow::bail!("expected table name in column 0, got {other:?}"),
+        };
+        let sql = format!("SELECT * FROM \"{name}\"");
+        self.loader
+            .run_query(&self.db_path, Some(&sql), HashMap::new())
     }
 }
 

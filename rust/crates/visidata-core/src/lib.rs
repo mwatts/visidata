@@ -20,6 +20,6 @@ mod value;
 pub use column::{Column, ColumnId, ColumnType};
 pub use commands::{CommandInfo, CommandRegistry, KeystrokeOutcome, builtin_commands};
 pub use row::{Row, RowId};
-pub use sheet::{Sheet, SheetId, SortDirection, SortKey};
+pub use sheet::{DrillAction, Sheet, SheetId, SortDirection, SortKey};
 pub use sheet_stack::SheetStack;
 pub use value::Value;
