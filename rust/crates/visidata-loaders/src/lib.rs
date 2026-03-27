@@ -1,5 +1,8 @@
+pub mod arrow_util;
 mod csv_loader;
 mod excel_loader;
+pub mod ext_discovery;
+pub mod ext_loader;
 mod fixed_width_loader;
 mod html_loader;
 mod json_loader;
@@ -11,6 +14,7 @@ mod yaml_loader;
 
 pub use csv_loader::{CsvLoader, load_delimited_from_str};
 pub use excel_loader::{ExcelLoader, load_worksheet};
+pub use ext_loader::{ExtLoader, ExtLoaderRegistry};
 pub use fixed_width_loader::{FixedWidthLoader, columnize, load_fixed_width_from_str};
 pub use html_loader::{HtmlLoader, load_html_from_str};
 pub use json_loader::{JsonLoader, load_json_from_str, load_jsonl_from_str};

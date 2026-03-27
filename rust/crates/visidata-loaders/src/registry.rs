@@ -1,9 +1,12 @@
 //! Loader trait and registry for dispatching file loads by extension.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Result;
 use visidata_core::Sheet;
+
+use crate::ext_loader::{ExtLoader, ExtLoaderRegistry};
 
 /// Trait for file format loaders.
 ///
@@ -21,9 +24,16 @@ pub trait Loader: Send + Sync {
 }
 
 /// Registry of loaders, dispatching by file extension.
+///
+/// Built-in loaders are checked first. External loaders (discovered via
+/// [`crate::ext_discovery::discover`]) fill in any extensions not covered
+/// by built-ins.
 #[derive(Default)]
 pub struct LoaderRegistry {
+    /// Built-in loaders, checked in registration order.
     loaders: Vec<Box<dyn Loader>>,
+    /// External loaders discovered from `$PATH`.
+    ext: ExtLoaderRegistry,
 }
 
 impl LoaderRegistry {
@@ -33,10 +43,16 @@ impl LoaderRegistry {
         Self::default()
     }
 
-    /// Create a registry with all built-in loaders registered.
+    /// Create a registry with all built-in loaders and any discovered
+    /// external loaders registered.
+    ///
+    /// Built-ins always take priority over external loaders for the same
+    /// file extension.
     #[must_use]
     pub fn with_builtins() -> Self {
         let mut registry = Self::new();
+
+        // Register built-ins first — they have priority.
         registry.register(Box::new(super::CsvLoader));
         registry.register(Box::new(super::JsonLoader));
         registry.register(Box::new(super::YamlLoader));
@@ -45,15 +61,29 @@ impl LoaderRegistry {
         registry.register(Box::new(super::ParquetLoader));
         registry.register(Box::new(super::HtmlLoader));
         registry.register(Box::new(super::FixedWidthLoader));
+
+        // Collect built-in extensions so external loaders can't shadow them.
+        let builtin_exts: Vec<String> = registry
+            .loaders
+            .iter()
+            .flat_map(|l| l.extensions().iter().map(|e| (*e).to_owned()))
+            .collect();
+        let builtin_ext_strs: Vec<&str> = builtin_exts.iter().map(String::as_str).collect();
+
+        // Discover and register external loaders.
+        for ext_loader in crate::ext_discovery::discover() {
+            registry.ext.register(ext_loader, &builtin_ext_strs);
+        }
+
         registry
     }
 
-    /// Register a loader.
+    /// Register a built-in loader.
     pub fn register(&mut self, loader: Box<dyn Loader>) {
         self.loaders.push(loader);
     }
 
-    /// Find a loader for the given file extension.
+    /// Find a built-in loader for the given file extension.
     #[must_use]
     pub fn find_loader(&self, extension: &str) -> Option<&dyn Loader> {
         let ext_lower = extension.to_lowercase();
@@ -63,26 +93,45 @@ impl LoaderRegistry {
             .map(AsRef::as_ref)
     }
 
-    /// Load a file, auto-detecting the format from the extension.
+    /// Find an external loader for the given file extension.
+    #[must_use]
+    pub fn find_ext_loader(&self, extension: &str) -> Option<Arc<ExtLoader>> {
+        self.ext.find(extension)
+    }
+
+    /// Load a file, checking built-ins then external loaders.
     ///
     /// # Errors
     ///
-    /// Returns an error if no loader matches the extension or if loading fails.
+    /// Returns an error if no loader matches the extension or loading fails.
     pub fn load_file(&self, path: &Path) -> Result<Sheet> {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
-        let loader = self
-            .find_loader(ext)
-            .ok_or_else(|| anyhow::anyhow!("no loader for extension: .{ext}"))?;
+        // Built-ins first.
+        if let Some(loader) = self.find_loader(ext) {
+            return loader.load(path);
+        }
 
-        loader.load(path)
+        // External loaders second.
+        if let Some(ext_loader) = self.find_ext_loader(ext) {
+            return ext_loader.load(path);
+        }
+
+        anyhow::bail!("no loader for extension: .{ext}")
+    }
+
+    /// Returns the number of registered external loaders.
+    #[must_use]
+    pub fn num_ext_loaders(&self) -> usize {
+        self.ext.len()
     }
 }
 
 impl std::fmt::Debug for LoaderRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LoaderRegistry")
-            .field("num_loaders", &self.loaders.len())
+            .field("num_builtins", &self.loaders.len())
+            .field("num_ext", &self.ext.len())
             .finish()
     }
 }

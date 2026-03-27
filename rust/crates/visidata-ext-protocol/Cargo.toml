@@ -1,0 +1,12 @@
+[package]
+name = "visidata-ext-protocol"
+description = "Shared protocol types for vd external loaders (Arrow IPC over subprocess)"
+edition.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

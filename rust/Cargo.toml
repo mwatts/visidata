@@ -21,6 +21,7 @@ nursery = { level = "warn", priority = -1 }
 [workspace.dependencies]
 # Internal crates
 visidata-core = { path = "crates/visidata-core" }
+visidata-ext-protocol = { path = "crates/visidata-ext-protocol" }
 visidata-scripting = { path = "crates/visidata-scripting" }
 visidata-tui = { path = "crates/visidata-tui" }
 visidata-loaders = { path = "crates/visidata-loaders" }
@@ -51,10 +52,13 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 calamine = "0.26"
 parquet = "54"
 arrow = { version = "54", default-features = false, features = ["chrono-tz"] }
+arrow-ipc = "54"
 scraper = "0.22"
+duckdb = { version = "1", features = ["vtab-arrow", "bundled"] }
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
+libc = "0.2"
 regex = "1"
 toml = "0.8"
 unicode-width = "0.2"

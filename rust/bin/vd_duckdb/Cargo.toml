@@ -1,0 +1,14 @@
+[package]
+name = "vd_duckdb"
+description = "DuckDB external loader for vd (Arrow IPC subprocess protocol)"
+edition.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+visidata-ext-protocol = { workspace = true }
+duckdb = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

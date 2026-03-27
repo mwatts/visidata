@@ -1,8 +1,9 @@
 //! Sheet rendering for ratatui.
 
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Cell, Row as TuiRow, Scrollbar, ScrollbarOrientation,
-    ScrollbarState, Table};
+use ratatui::widgets::{
+    Block, Borders, Cell, Row as TuiRow, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
+};
 use unicode_width::UnicodeWidthStr;
 
 use visidata_core::{Sheet, Value};
@@ -331,12 +332,7 @@ pub fn draw_menu_overlay(
         clippy::cast_possible_truncation,
         reason = "dropdown dimensions will not exceed u16::MAX"
     )]
-    let dropdown_width = items
-        .iter()
-        .map(|i| i.label().len())
-        .max()
-        .unwrap_or(10) as u16
-        + 4;
+    let dropdown_width = items.iter().map(|i| i.label().len()).max().unwrap_or(10) as u16 + 4;
 
     #[expect(
         clippy::cast_possible_truncation,
@@ -366,8 +362,7 @@ pub fn draw_menu_overlay(
         })
         .collect();
 
-    let list = List::new(list_items)
-        .block(Block::bordered().border_style(theme.status_bar));
+    let list = List::new(list_items).block(Block::bordered().border_style(theme.status_bar));
     frame.render_widget(list, dropdown_area);
 }
 
