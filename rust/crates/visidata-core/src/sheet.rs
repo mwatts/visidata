@@ -335,4 +335,91 @@ mod tests {
         let col = sheet.current_column().expect("should have current column");
         assert_eq!(col.name, "name");
     }
+
+    #[test]
+    fn current_row_empty_sheet() {
+        let sheet = Sheet::new("empty");
+        assert!(sheet.current_row().is_none());
+        assert!(sheet.current_column().is_none());
+    }
+
+    #[test]
+    fn cursor_down_empty_sheet() {
+        let mut sheet = Sheet::new("empty");
+        sheet.cursor_down(1); // should not panic
+        assert_eq!(sheet.cursor_row, 0);
+    }
+
+    #[test]
+    fn clamp_cursor_empty_sheet() {
+        let mut sheet = Sheet::new("empty");
+        sheet.cursor_row = 5;
+        sheet.cursor_col = 3;
+        sheet.clamp_cursor();
+        assert_eq!(sheet.cursor_row, 0);
+        assert_eq!(sheet.cursor_col, 0);
+    }
+
+    #[test]
+    fn clamp_cursor_after_deletion() {
+        let mut sheet = sample_sheet();
+        sheet.cursor_row = 2; // last row
+        sheet.rows.pop(); // remove last row
+        sheet.clamp_cursor();
+        assert_eq!(sheet.cursor_row, 1); // clamped to new last
+    }
+
+    #[test]
+    fn clamp_cursor_after_hide_columns() {
+        let mut sheet = sample_sheet();
+        sheet.cursor_col = 2; // last visible col
+        sheet.columns[0].width = Some(0); // hide first
+        sheet.columns[1].width = Some(0); // hide second
+        sheet.clamp_cursor();
+        assert_eq!(sheet.cursor_col, 0); // only 1 visible col left
+    }
+
+    #[test]
+    fn get_cell_display() {
+        let sheet = sample_sheet();
+        assert_eq!(sheet.get_cell_display(0, 0), "Alice");
+        assert_eq!(sheet.get_cell_display(1, 1), "25");
+        assert_eq!(sheet.get_cell_display(99, 0), ""); // out of bounds
+        assert_eq!(sheet.get_cell_display(0, 99), ""); // out of bounds
+    }
+
+    #[test]
+    fn sheet_source() {
+        let mut sheet = Sheet::new("test");
+        assert!(sheet.source.is_none());
+        sheet.source = Some(std::path::PathBuf::from("/tmp/data.csv"));
+        assert_eq!(
+            sheet.source.as_ref().unwrap().to_str().unwrap(),
+            "/tmp/data.csv"
+        );
+    }
+
+    #[test]
+    fn sheet_unique_ids() {
+        let s1 = Sheet::new("a");
+        let s2 = Sheet::new("b");
+        assert_ne!(s1.id, s2.id);
+    }
+
+    #[test]
+    fn with_data_sets_name() {
+        let sheet = Sheet::with_data(
+            "my_sheet",
+            vec![Column::new(ColumnId(0), "x", 0)],
+            vec![Row::new(vec![Value::Int(1)])],
+        );
+        assert_eq!(sheet.name, "my_sheet");
+        assert_eq!(sheet.num_rows(), 1);
+        assert_eq!(sheet.num_cols(), 1);
+        assert_eq!(sheet.cursor_row, 0);
+        assert_eq!(sheet.cursor_col, 0);
+        assert!(sheet.source.is_none());
+        assert!(sheet.sort_keys.is_empty());
+        assert_eq!(sheet.num_keys, 0);
+    }
 }

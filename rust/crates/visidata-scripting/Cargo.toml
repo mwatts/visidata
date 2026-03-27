@@ -11,3 +11,6 @@ workspace = true
 visidata-core = { workspace = true }
 rhai = { workspace = true }
 anyhow = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }

@@ -113,4 +113,38 @@ mod tests {
         let names: Vec<_> = stack.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, vec!["a", "b", "c"]);
     }
+
+    #[test]
+    fn as_slice() {
+        let mut stack = SheetStack::new();
+        stack.push(Sheet::new("x"));
+        stack.push(Sheet::new("y"));
+        let slice = stack.as_slice();
+        assert_eq!(slice.len(), 2);
+        assert_eq!(slice[0].name, "x");
+        assert_eq!(slice[1].name, "y");
+    }
+
+    #[test]
+    fn active_on_empty() {
+        let stack = SheetStack::new();
+        assert!(stack.active().is_none());
+    }
+
+    #[test]
+    fn active_mut_on_empty() {
+        let mut stack = SheetStack::new();
+        assert!(stack.active_mut().is_none());
+    }
+
+    #[test]
+    fn pop_all() {
+        let mut stack = SheetStack::new();
+        stack.push(Sheet::new("a"));
+        stack.push(Sheet::new("b"));
+        stack.pop();
+        stack.pop();
+        assert!(stack.is_empty());
+        assert!(stack.active().is_none());
+    }
 }

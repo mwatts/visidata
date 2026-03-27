@@ -252,4 +252,110 @@ mod tests {
             assert_eq!(&back, v, "roundtrip failed for {v:?}");
         }
     }
+
+    #[test]
+    fn value_to_dynamic_date() {
+        use chrono::NaiveDateTime;
+        let d =
+            NaiveDateTime::parse_from_str("2021-07-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let dyn_val = value_to_dynamic(&Value::Date(d));
+        // Date becomes a string in Rhai
+        assert!(dyn_val.is_string());
+        let s = dyn_val.into_string().unwrap();
+        assert!(s.contains("2021"), "date string should contain year");
+    }
+
+    #[test]
+    fn value_to_dynamic_bytes() {
+        let dyn_val = value_to_dynamic(&Value::Bytes(vec![1, 2, 3]));
+        assert!(dyn_val.is_string());
+        assert_eq!(dyn_val.into_string().unwrap(), "<3 bytes>");
+    }
+
+    #[test]
+    fn value_to_dynamic_error() {
+        let dyn_val = value_to_dynamic(&Value::Error("broken".into()));
+        assert!(dyn_val.is_string());
+        assert_eq!(dyn_val.into_string().unwrap(), "!broken");
+    }
+
+    #[test]
+    fn is_null_function() {
+        let engine = ScriptEngine::new();
+        let mut scope = Scope::new();
+
+        // Rhai's unit type `()` maps to null
+        let result = engine.eval_expr("is_null(())", &mut scope).unwrap();
+        assert_eq!(result, Value::Bool(true));
+
+        let result = engine.eval_expr("is_null(42)", &mut scope).unwrap();
+        assert_eq!(result, Value::Bool(false));
+
+        let result = engine.eval_expr("is_null(\"\")", &mut scope).unwrap();
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    fn to_int_error_on_invalid_string() {
+        let engine = ScriptEngine::new();
+        let mut scope = Scope::new();
+        let result = engine.eval_expr("to_int(\"abc\")", &mut scope);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn to_float_error_on_invalid_string() {
+        let engine = ScriptEngine::new();
+        let mut scope = Scope::new();
+        let result = engine.eval_expr("to_float(\"xyz\")", &mut scope);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn scope_mutation_persists() {
+        let engine = ScriptEngine::new();
+        let mut scope = Scope::new();
+        engine.exec_script("let counter = 0;", &mut scope).unwrap();
+        engine.exec_script("counter += 1;", &mut scope).unwrap();
+        engine.exec_script("counter += 1;", &mut scope).unwrap();
+        let result = engine.eval_expr("counter", &mut scope).unwrap();
+        assert_eq!(result, Value::Int(2));
+    }
+
+    #[test]
+    fn conditional_expression() {
+        let engine = ScriptEngine::new();
+        let mut scope = Scope::new();
+        scope.push("x", 10_i64);
+        let result = engine
+            .eval_expr("if x > 5 { \"big\" } else { \"small\" }", &mut scope)
+            .unwrap();
+        assert_eq!(result, Value::Text("big".into()));
+    }
+
+    #[test]
+    fn string_concatenation() {
+        let engine = ScriptEngine::new();
+        let mut scope = Scope::new();
+        scope.push("first", "hello".to_owned());
+        scope.push("second", " world".to_owned());
+        let result = engine.eval_expr("first + second", &mut scope).unwrap();
+        assert_eq!(result, Value::Text("hello world".into()));
+    }
+
+    #[test]
+    fn eval_returns_null_for_unit() {
+        let engine = ScriptEngine::new();
+        let mut scope = Scope::new();
+        let result = engine.eval_expr("()", &mut scope).unwrap();
+        assert_eq!(result, Value::Null);
+    }
+
+    #[test]
+    fn default_creates_working_engine() {
+        let engine = ScriptEngine::default();
+        let mut scope = Scope::new();
+        let result = engine.eval_expr("1 + 1", &mut scope).unwrap();
+        assert_eq!(result, Value::Int(2));
+    }
 }

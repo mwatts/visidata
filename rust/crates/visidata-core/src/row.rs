@@ -109,10 +109,33 @@ mod tests {
     }
 
     #[test]
+    fn row_set_overwrites() {
+        let mut row = Row::new(vec![Value::Int(1), Value::Int(2)]);
+        row.set(0, Value::Text("replaced".into()));
+        assert_eq!(row.get(0), &Value::Text("replaced".into()));
+        assert_eq!(row.get(1), &Value::Int(2)); // other values unchanged
+    }
+
+    #[test]
     fn row_selection() {
         let mut row = Row::new(vec![]);
         assert!(!row.selected);
         row.selected = true;
         assert!(row.selected);
+    }
+
+    #[test]
+    fn row_empty() {
+        let row = Row::new(vec![]);
+        assert!(row.is_empty());
+        assert_eq!(row.len(), 0);
+        assert_eq!(row.get(0), &Value::Null);
+    }
+
+    #[test]
+    fn row_id_display() {
+        let row = Row::new(vec![]);
+        let display = row.id.to_string();
+        assert!(!display.is_empty());
     }
 }

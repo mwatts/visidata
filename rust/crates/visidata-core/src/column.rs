@@ -190,5 +190,169 @@ mod tests {
         assert_eq!(ColumnType::Int.indicator(), "#");
         assert_eq!(ColumnType::Float.indicator(), "%");
         assert_eq!(ColumnType::Text.indicator(), "~");
+        assert_eq!(ColumnType::Bool.indicator(), "?");
+        assert_eq!(ColumnType::Date.indicator(), "@");
+        assert_eq!(ColumnType::Currency.indicator(), "$");
+    }
+
+    #[test]
+    fn coerce_text_passthrough() {
+        // Text type (default) returns the raw value unchanged
+        let row = sample_row();
+        let col = Column::new(ColumnId(1), "age", 1);
+        assert_eq!(col.col_type, ColumnType::Text);
+        assert_eq!(col.typed_value(&row), Value::Int(30)); // not coerced to Text
+    }
+
+    #[test]
+    fn coerce_int_from_various() {
+        let row = Row::new(vec![
+            Value::Int(42),
+            Value::Float(3.7),
+            Value::Text("99".into()),
+            Value::Text("abc".into()),
+            Value::Bool(true),
+            Value::Null,
+        ]);
+
+        let mut col = Column::new(ColumnId(0), "c", 0);
+        col.col_type = ColumnType::Int;
+        assert_eq!(col.typed_value(&row), Value::Int(42));
+
+        col.source_idx = 1;
+        assert_eq!(col.typed_value(&row), Value::Int(3)); // truncated
+
+        col.source_idx = 2;
+        assert_eq!(col.typed_value(&row), Value::Int(99)); // parsed from text
+
+        col.source_idx = 3;
+        assert!(col.typed_value(&row).is_error()); // "abc" can't be int
+
+        col.source_idx = 4;
+        assert_eq!(col.typed_value(&row), Value::Int(1)); // true -> 1
+
+        col.source_idx = 5;
+        assert!(col.typed_value(&row).is_error()); // null can't be int
+    }
+
+    #[test]
+    fn coerce_float_from_various() {
+        let row = Row::new(vec![
+            Value::Float(3.14),
+            Value::Int(42),
+            Value::Text("2.5".into()),
+            Value::Text("xyz".into()),
+            Value::Bool(false),
+        ]);
+
+        let mut col = Column::new(ColumnId(0), "c", 0);
+        col.col_type = ColumnType::Float;
+        assert_eq!(col.typed_value(&row), Value::Float(3.14));
+
+        col.source_idx = 1;
+        assert_eq!(col.typed_value(&row), Value::Float(42.0));
+
+        col.source_idx = 2;
+        assert_eq!(col.typed_value(&row), Value::Float(2.5));
+
+        col.source_idx = 3;
+        assert!(col.typed_value(&row).is_error());
+
+        col.source_idx = 4;
+        assert_eq!(col.typed_value(&row), Value::Float(0.0));
+    }
+
+    #[test]
+    fn coerce_bool_from_various() {
+        let row = Row::new(vec![
+            Value::Bool(true),
+            Value::Int(0),
+            Value::Int(5),
+            Value::Text("hello".into()),
+            Value::Text("".into()),
+            Value::Null,
+            Value::Float(1.0),
+        ]);
+
+        let mut col = Column::new(ColumnId(0), "c", 0);
+        col.col_type = ColumnType::Bool;
+
+        assert_eq!(col.typed_value(&row), Value::Bool(true));
+
+        col.source_idx = 1;
+        assert_eq!(col.typed_value(&row), Value::Bool(false)); // 0 -> false
+
+        col.source_idx = 2;
+        assert_eq!(col.typed_value(&row), Value::Bool(true)); // nonzero -> true
+
+        col.source_idx = 3;
+        assert_eq!(col.typed_value(&row), Value::Bool(true)); // non-empty -> true
+
+        col.source_idx = 4;
+        assert_eq!(col.typed_value(&row), Value::Bool(false)); // empty -> false
+
+        col.source_idx = 5;
+        assert_eq!(col.typed_value(&row), Value::Bool(false)); // null -> false
+
+        col.source_idx = 6;
+        assert!(col.typed_value(&row).is_error()); // float can't be bool
+    }
+
+    #[test]
+    fn coerce_date_placeholder() {
+        let row = Row::new(vec![Value::Int(42)]);
+        let mut col = Column::new(ColumnId(0), "c", 0);
+        col.col_type = ColumnType::Date;
+        // Placeholder: converts to text representation
+        assert_eq!(col.typed_value(&row), Value::Text("42".into()));
+    }
+
+    #[test]
+    fn coerce_currency_placeholder() {
+        let row = Row::new(vec![Value::Float(19.99)]);
+        let mut col = Column::new(ColumnId(0), "c", 0);
+        col.col_type = ColumnType::Currency;
+        assert_eq!(col.typed_value(&row), Value::Text("19.99".into()));
+    }
+
+    #[test]
+    fn column_key_flag() {
+        let mut col = Column::new(ColumnId(0), "id", 0);
+        assert!(!col.is_key);
+        col.is_key = true;
+        assert!(col.is_key);
+    }
+
+    #[test]
+    fn column_width_variants() {
+        let mut col = Column::new(ColumnId(0), "x", 0);
+        assert_eq!(col.width, None); // auto-fit
+        assert!(!col.is_hidden());
+
+        col.width = Some(10);
+        assert!(!col.is_hidden());
+
+        col.width = Some(0);
+        assert!(col.is_hidden());
+    }
+
+    #[test]
+    fn column_default_type() {
+        let col = Column::new(ColumnId(0), "x", 0);
+        assert_eq!(col.col_type, ColumnType::Text);
+    }
+
+    #[test]
+    fn display_value_null() {
+        let row = Row::new(vec![Value::Null]);
+        let col = Column::new(ColumnId(0), "x", 0);
+        assert_eq!(col.display_value(&row), "");
+    }
+
+    #[test]
+    fn display_value_error() {
+        let row = Row::new(vec![Value::Error("broken".into())]);
+        let col = Column::new(ColumnId(0), "x", 0);
+        assert_eq!(col.display_value(&row), "!broken");
     }
 }

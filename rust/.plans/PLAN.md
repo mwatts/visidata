@@ -89,8 +89,9 @@ rust/
 8. **Unit tests** for all core types
 
 ### Ported Python Tests
-- `test_date.py` — `customdate()` parser → port date parsing logic into `Value::Date` construction
-- `test_path.py` — `Path.with_name()`, `base_stem`, `ext`, `iterdir()` → port as `visidata-core::path` module tests
+None — Python tests for core types (`test_date.py`, `test_path.py`) test higher-level
+features (custom date format parsing → Phase 4, Path file I/O → Phase 3). Phase 1
+tests are new Rust unit tests covering the data model types directly.
 
 ### Deliverable
 `cargo test` passes with core data model tests.
@@ -155,6 +156,7 @@ rust/
 7. **Integration tests** with sample files
 
 ### Ported Python Tests
+- `test_path.py` — `Path.with_name()`, `base_stem`, `ext`, `iterdir()`, `name`, `RepeatFile`, `BytesIOWrapper` → port as `visidata-core::path` or `visidata-loaders::path` module tests
 - `test-delimiter.sh` — TSV/CSV/PSV/USV delimiter handling, `-d` flag, `--csv-delimiter` → port as loader integration tests
 - `test-roundtrip.sh` — load→save→reload→save idempotence for CSV/TSV/JSON → port as round-trip integration tests
 - `test-stdin.sh` — `seq 10000 | vd -f txt` piped input → port as stdin integration test
@@ -182,8 +184,9 @@ rust/
 6. **Input line** — bottom-of-screen text input for rename, search, etc.
 
 ### Ported Python Tests
-- Batch replay tests: `addcol-*.vd*` (column addition), column rename/hide/resize tests from `tests/`
+- `test_date.py` — `customdate()` format-string date parser, date comparison → port as `visidata-core::value` date parsing tests
 - `test_edittext.py` — `InputWidget.editline()` keystroke handling (Home, End, Delete, Backspace, Ctrl+keys, undo, transpose) → port as `visidata-tui::input` module tests
+- Batch replay tests: `addcol-*.vd*` (column addition), column rename/hide/resize tests from `tests/`
 
 ### Deliverable
 Column operations work interactively.
@@ -509,8 +512,8 @@ VisiData's Python test suite has 3 layers. Each maps to a Rust equivalent:
 
 | Python Test | Phase | Rust Location |
 |---|---|---|
-| `test_date.py` | 1 | `visidata-core::value` |
-| `test_path.py` | 1 | `visidata-core::path` |
+| `test_date.py` | 4 | `visidata-core::value` (date parsing) |
+| `test_path.py` | 3 | `visidata-loaders::path` |
 | `test_cliptext.py` | 2 | `visidata-tui::cliptext` |
 | `test_parsepos.py` | 2 | `bin/vd` CLI tests |
 | `test-smoke.sh` | 2 | `bin/vd` integration tests |
