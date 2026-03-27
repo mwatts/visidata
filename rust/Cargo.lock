@@ -3274,6 +3274,7 @@ dependencies = [
  "anyhow",
  "arrow",
  "calamine",
+ "chrono",
  "csv",
  "parquet",
  "rusqlite",
