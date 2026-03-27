@@ -1,5 +1,7 @@
-// Phase 2 — TUI rendering will be implemented here.
-// For now, re-export dependencies so the binary can use them.
+pub mod app;
+pub mod cliptext;
+pub mod renderer;
 
+pub use app::App;
 pub use visidata_core;
 pub use visidata_scripting;
