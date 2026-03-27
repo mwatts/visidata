@@ -27,11 +27,12 @@ use visidata_ext_protocol::{ExtManifest, LoadRequest, Transport};
 /// SQL run when `query` is null — return a table/view index.
 const TABLE_INDEX_SQL: &str = "\
     SELECT \
+        table_schema AS schema, \
         table_name AS name, \
         table_type AS type \
     FROM information_schema.tables \
-    WHERE table_schema = 'main' \
-    ORDER BY table_type, table_name";
+    WHERE table_schema NOT IN ('information_schema', 'pg_catalog') \
+    ORDER BY table_schema, table_type, table_name";
 
 fn main() {
     if let Err(e) = run() {

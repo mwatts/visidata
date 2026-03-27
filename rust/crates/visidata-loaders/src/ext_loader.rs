@@ -242,11 +242,30 @@ pub struct ExtDrill {
 
 impl DrillAction for ExtDrill {
     fn open_row(&self, row: &Row) -> anyhow::Result<Sheet> {
-        let name = match row.get(0) {
-            Value::Text(s) => s.clone(),
-            other => anyhow::bail!("expected table name in column 0, got {other:?}"),
+        // Index sheets may have schema in column 0 and name in column 1
+        // (e.g. vd_duckdb), or just name in column 0 (simpler loaders).
+        let (schema, name) = if row.len() >= 3 {
+            let schema = match row.get(0) {
+                Value::Text(s) => s.clone(),
+                other => anyhow::bail!("expected schema in column 0, got {other:?}"),
+            };
+            let name = match row.get(1) {
+                Value::Text(s) => s.clone(),
+                other => anyhow::bail!("expected table name in column 1, got {other:?}"),
+            };
+            (Some(schema), name)
+        } else {
+            let name = match row.get(0) {
+                Value::Text(s) => s.clone(),
+                other => anyhow::bail!("expected table name in column 0, got {other:?}"),
+            };
+            (None, name)
         };
-        let sql = format!("SELECT * FROM \"{name}\"");
+        let sql = if let Some(schema) = &schema {
+            format!("SELECT * FROM \"{schema}\".\"{name}\"")
+        } else {
+            format!("SELECT * FROM \"{name}\"")
+        };
         let options: HashMap<String, serde_json::Value> = self.options_snapshot
             .iter()
             .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
