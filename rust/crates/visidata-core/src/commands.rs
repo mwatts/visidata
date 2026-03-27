@@ -228,6 +228,12 @@ pub fn builtin_commands() -> CommandRegistry {
     reg.add("\"", "dup-selected", "push sheet of selected rows");
     reg.add("F", "freq-col", "frequency table for current column");
 
+    // Sheet types
+    reg.add("C", "columns-sheet", "show columns of current sheet");
+    reg.add("I", "describe-sheet", "statistical summary of columns");
+    reg.add("S", "sheets-sheet", "show all open sheets");
+    reg.add("O", "options-sheet", "show all options");
+
     // Help
     reg.add("", "help-commands", "show all commands");
 

@@ -319,10 +319,23 @@ impl App {
                 }
             }
 
-            // --- Options sheet ---
+            // --- Sheet types ---
             KeyCode::Char('O') => {
                 let sheet = visidata_core::options::options_sheet(&self.options);
                 self.stack.push(sheet);
+            }
+            KeyCode::Char('C') => {
+                let meta = visidata_core::sheets::columns_sheet(sheet);
+                self.stack.push(meta);
+            }
+            KeyCode::Char('I') => {
+                let desc = visidata_core::sheets::describe_sheet(sheet);
+                self.stack.push(desc);
+            }
+            KeyCode::Char('S') => {
+                let all: Vec<&Sheet> = self.stack.iter().collect();
+                let index = visidata_core::sheets::sheets_sheet(&all);
+                self.stack.push(index);
             }
 
             // --- Help & Command palette ---
