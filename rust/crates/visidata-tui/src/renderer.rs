@@ -38,6 +38,7 @@ pub fn cols_fitting_in_width(sheet: &Sheet, area_width: u16) -> usize {
 /// Draw a sheet into the given frame area.
 ///
 /// Returns the computed `top_row` so the caller can write it back to the sheet.
+#[expect(clippy::too_many_arguments, reason = "draw functions need all rendering context")]
 pub fn draw_sheet(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -328,15 +329,15 @@ fn draw_sidebar(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme)
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let cur_col = sheet.visible_columns().get(sheet.cursor_col).cloned();
+    let cur_col = sheet.visible_columns().get(sheet.cursor_col).copied();
     let col_info = cur_col.as_ref().map_or_else(
         || "—".to_owned(),
         |c| format!("{}{} ({})", c.col_type.indicator(), c.name,
-            c.width.map_or("auto".to_owned(), |w| format!("{w}ch"))),
+            c.width.map_or_else(|| "auto".to_owned(), |w| format!("{w}ch"))),
     );
     let agg_info = cur_col.as_ref()
         .and_then(|c| c.aggregators.first().copied())
-        .map_or("none".to_owned(), |f| f.name().to_owned());
+        .map_or_else(|| "none".to_owned(), |f| f.name().to_owned());
 
     let sort_info = if sheet.sort_keys.is_empty() {
         "none".to_owned()
@@ -389,6 +390,7 @@ pub fn draw_context_menu(
 
     #[expect(clippy::cast_possible_truncation, reason = "item label lengths won't exceed u16")]
     let w = items.iter().map(|(l, _)| l.len()).max().unwrap_or(10) as u16 + 4;
+    #[expect(clippy::cast_possible_truncation, reason = "context menus won't have more than u16::MAX items")]
     let h = items.len() as u16 + 2;
 
     let x = anchor_col.min(area.width.saturating_sub(w));

@@ -147,6 +147,7 @@ enum InputMode {
 
 /// Application state for the TUI.
 #[derive(Debug)]
+#[expect(clippy::struct_excessive_bools, reason = "each bool is an independent runtime flag")]
 pub struct App {
     /// Sheet navigation stack.
     pub stack: SheetStack,
@@ -339,7 +340,7 @@ impl App {
                 if self.status_history.len() > 1_000 {
                     self.status_history.pop_back();
                 }
-                last_pushed_status = self.status.clone();
+                last_pushed_status.clone_from(&self.status);
             }
 
             terminal.draw(|frame| self.draw(frame))?;
@@ -354,11 +355,11 @@ impl App {
             self.poll_loader();
 
             // Auto-reload if interval has elapsed (GAP-UX-25).
-            if let (Some(interval), Some(last)) = (self.auto_reload_interval, self.last_reload_at) {
-                if last.elapsed() >= interval {
-                    self.reload_current_sheet();
-                    self.last_reload_at = Some(std::time::Instant::now());
-                }
+            if let (Some(interval), Some(last)) = (self.auto_reload_interval, self.last_reload_at)
+                && last.elapsed() >= interval
+            {
+                self.reload_current_sheet();
+                self.last_reload_at = Some(std::time::Instant::now());
             }
 
             // Poll for keyboard events with a timeout so we can refresh
@@ -578,14 +579,14 @@ impl App {
         if self.context_menu.is_some() {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
-                    if let Some(cm) = &mut self.context_menu {
-                        if cm.selected > 0 { cm.selected -= 1; }
+                    if let Some(cm) = &mut self.context_menu && cm.selected > 0 {
+                        cm.selected -= 1;
                     }
                     return;
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    if let Some(cm) = &mut self.context_menu {
-                        if cm.selected + 1 < cm.items.len() { cm.selected += 1; }
+                    if let Some(cm) = &mut self.context_menu && cm.selected + 1 < cm.items.len() {
+                        cm.selected += 1;
                     }
                     return;
                 }

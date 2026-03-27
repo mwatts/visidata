@@ -652,6 +652,7 @@ impl Sheet {
             let nums: Vec<f64> = self.rows.iter()
                 .filter_map(|row| {
                     match col.typed_value(row) {
+                        #[expect(clippy::cast_precision_loss, reason = "bin boundary; precision loss negligible")]
                         Value::Int(n)   => Some(n as f64),
                         Value::Float(f) => Some(f),
                         _               => None,
@@ -708,8 +709,8 @@ impl Sheet {
         const N_BINS: usize = 10;
 
         let col = &self.columns[col_idx];
-        let min = nums.iter().cloned().fold(f64::INFINITY, f64::min);
-        let max = nums.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let min = nums.iter().copied().fold(f64::INFINITY, f64::min);
+        let max = nums.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
         if (max - min).abs() < f64::EPSILON {
             // All same value — fall back to single bucket
@@ -726,8 +727,9 @@ impl Sheet {
             return Self::with_data(format!("{}_freq", col.name), columns, rows);
         }
 
+        #[expect(clippy::cast_precision_loss, reason = "N_BINS is 10; no precision loss possible")]
         let width = (max - min) / N_BINS as f64;
-        let mut counts = vec![0usize; N_BINS];
+        let mut counts = [0usize; N_BINS];
         for &v in nums {
             #[expect(clippy::cast_sign_loss, reason = "v >= min so difference is non-negative")]
             #[expect(clippy::cast_possible_truncation, reason = "clamped to N_BINS - 1")]
@@ -744,7 +746,8 @@ impl Sheet {
         let rows: Vec<Row> = (0..N_BINS)
             .filter(|&i| counts[i] > 0)
             .map(|i| {
-                let lo = min + i as f64 * width;
+                #[expect(clippy::cast_precision_loss, reason = "i < 10; precision loss negligible")]
+                let lo = f64::mul_add(i as f64, width, min);
                 let hi = lo + width;
                 let label = format!("[{lo:.4}, {hi:.4})");
                 Row::new(vec![Value::Text(label), Value::Int(counts[i] as i64)])
