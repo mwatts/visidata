@@ -11,7 +11,9 @@ use crossterm::terminal::{
 use ratatui::DefaultTerminal;
 use ratatui::prelude::*;
 
-use visidata_core::{ColumnType, Sheet, SheetStack, SortDirection};
+use visidata_core::{
+    ColumnType, CommandRegistry, Sheet, SheetStack, SortDirection, builtin_commands,
+};
 
 use crate::input::{EditResult, LineEditor};
 use crate::renderer;
@@ -27,6 +29,8 @@ enum InputMode {
     SearchForward(LineEditor),
     /// Backward search in current column.
     SearchBackward(LineEditor),
+    /// Command palette (fuzzy search by longname).
+    CommandPalette(LineEditor),
 }
 
 /// Application state for the TUI.
@@ -49,6 +53,9 @@ pub struct App {
 
     /// Whether last search was forward (true) or backward (false).
     last_search_forward: bool,
+
+    /// Command registry.
+    pub commands: CommandRegistry,
 }
 
 impl App {
@@ -64,6 +71,7 @@ impl App {
             mode: InputMode::Normal,
             last_search: None,
             last_search_forward: true,
+            commands: builtin_commands(),
         }
     }
 
@@ -98,7 +106,8 @@ impl App {
                     InputMode::Normal => self.handle_normal_key(key),
                     InputMode::RenameColumn(_)
                     | InputMode::SearchForward(_)
-                    | InputMode::SearchBackward(_) => self.handle_input_key(key),
+                    | InputMode::SearchBackward(_)
+                    | InputMode::CommandPalette(_) => self.handle_input_key(key),
                 }
             }
         }
@@ -120,6 +129,12 @@ impl App {
                 }
                 InputMode::SearchBackward(editor) => {
                     Some(format!("?{}", editor.text()))
+                }
+                InputMode::CommandPalette(editor) => {
+                    let query = editor.text();
+                    let matches = self.commands.search_commands(&query);
+                    let hint = matches.first().map_or("", |c| c.longname.as_str());
+                    Some(format!("command: {query}  → {hint}"))
                 }
             };
             renderer::draw_sheet(frame, area, sheet, &self.status, input_text.as_deref());
@@ -294,10 +309,22 @@ impl App {
                 }
             }
 
+            // --- Help & Command palette ---
+            KeyCode::Char(':' | ' ') => {
+                self.mode = InputMode::CommandPalette(LineEditor::new(""));
+                return;
+            }
+
             _ => {}
         }
 
         self.update_status();
+    }
+
+    /// Handle the help command — push help sheet onto stack.
+    fn show_help(&mut self) {
+        let sheet = visidata_core::help::help_sheet(&self.commands);
+        self.stack.push(sheet);
     }
 
     /// Handle a key event while in input mode.
@@ -361,10 +388,150 @@ impl App {
                     self.mode = InputMode::SearchBackward(editor);
                 }
             },
+            InputMode::CommandPalette(mut editor) => match editor.handle_key(&key_str) {
+                EditResult::Accept(query) => {
+                    self.execute_command_by_query(&query);
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Cancel => {
+                    self.mode = InputMode::Normal;
+                }
+                EditResult::Continue => {
+                    self.mode = InputMode::CommandPalette(editor);
+                }
+            },
             InputMode::Normal => unreachable!(),
         }
 
         self.update_status();
+    }
+
+    /// Execute a command by searching the registry for a query match.
+    fn execute_command_by_query(&mut self, query: &str) {
+        if query.is_empty() {
+            return;
+        }
+
+        // Try exact longname match first
+        if self.commands.lookup_by_name(query).is_some() {
+            self.dispatch_command(query);
+            return;
+        }
+
+        // Fuzzy search — execute first match
+        let matches = self.commands.search_commands(query);
+        if let Some(cmd) = matches.first() {
+            let longname = cmd.longname.clone();
+            self.dispatch_command(&longname);
+        } else {
+            self.status = format!("no command: {query}");
+        }
+    }
+
+    /// Dispatch a command by longname.
+    #[expect(clippy::too_many_lines, reason = "single match dispatch table")]
+    fn dispatch_command(&mut self, longname: &str) {
+        match longname {
+            "help-commands" => self.show_help(),
+            "quit-sheet" => {
+                self.stack.pop();
+                if self.stack.is_empty() {
+                    self.running = false;
+                }
+            }
+            "cursor-down" => {
+                if let Some(s) = self.stack.active_mut() { s.cursor_down(1); }
+            }
+            "cursor-up" => {
+                if let Some(s) = self.stack.active_mut() { s.cursor_up(1); }
+            }
+            "cursor-right" => {
+                if let Some(s) = self.stack.active_mut() { s.cursor_right(1); }
+            }
+            "cursor-left" => {
+                if let Some(s) = self.stack.active_mut() { s.cursor_left(1); }
+            }
+            "go-top" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.cursor_row = 0;
+                    s.top_row = 0;
+                }
+            }
+            "go-bottom" => {
+                if let Some(s) = self.stack.active_mut()
+                    && !s.rows.is_empty() {
+                        s.cursor_row = s.rows.len() - 1;
+                    }
+            }
+            "sort-asc" => {
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(idx) = resolve_cursor_col_idx(s) {
+                        s.sort_by(idx, SortDirection::Ascending);
+                    }
+            }
+            "sort-desc" => {
+                if let Some(s) = self.stack.active_mut()
+                    && let Some(idx) = resolve_cursor_col_idx(s) {
+                        s.sort_by(idx, SortDirection::Descending);
+                    }
+            }
+            "select-row" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.select_current();
+                    s.cursor_down(1);
+                }
+            }
+            "unselect-row" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.unselect_current();
+                    s.cursor_down(1);
+                }
+            }
+            "toggle-row" => {
+                if let Some(s) = self.stack.active_mut() {
+                    s.toggle_select_current();
+                    s.cursor_down(1);
+                }
+            }
+            "search-col" => {
+                self.mode = InputMode::SearchForward(LineEditor::new(""));
+            }
+            "search-col-backward" => {
+                self.mode = InputMode::SearchBackward(LineEditor::new(""));
+            }
+            "search-next" => self.repeat_search(true),
+            "search-prev" => self.repeat_search(false),
+            "dup-selected" => {
+                if let Some(s) = self.stack.active()
+                    && s.num_selected() > 0 {
+                        let filtered = s.selected_rows_sheet();
+                        self.stack.push(filtered);
+                    }
+            }
+            "freq-col" => {
+                if let Some(s) = self.stack.active()
+                    && let Some(idx) = resolve_cursor_col_idx(s) {
+                        let freq = s.frequency_sheet(idx);
+                        self.stack.push(freq);
+                    }
+            }
+            "resize-col-max" => {
+                if let Some(s) = self.stack.active_mut() {
+                    auto_fit_column(s);
+                }
+            }
+            "rename-col" => {
+                if let Some(s) = self.stack.active() {
+                    let vis = s.visible_columns();
+                    if let Some(&col) = vis.get(s.cursor_col) {
+                        self.mode = InputMode::RenameColumn(LineEditor::new(&col.name));
+                    }
+                }
+            }
+            _ => {
+                self.status = format!("unknown command: {longname}");
+            }
+        }
     }
 
     /// Execute a search in the given direction.

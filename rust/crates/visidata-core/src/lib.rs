@@ -1,11 +1,14 @@
 mod value;
 mod column;
+pub mod commands;
+pub mod help;
 mod row;
 mod sheet;
 mod sheet_stack;
 pub mod typeinfer;
 
 pub use column::{Column, ColumnId, ColumnType};
+pub use commands::{CommandInfo, CommandRegistry, KeystrokeOutcome, builtin_commands};
 pub use row::{Row, RowId};
 pub use sheet::{Sheet, SheetId, SortDirection, SortKey};
 pub use sheet_stack::SheetStack;
