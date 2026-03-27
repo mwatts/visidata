@@ -364,14 +364,14 @@ Each entry has:
 
 ### GAP-105 — Options consumed by CSV loader (`csv_delimiter`)
 **Python**: CSV delimiter is read from `options.csv_delimiter` at load time.
-**Rust now**: `CsvLoader` hardcodes delimiter based on file extension (`,` for `.csv`, `\t` for `.tsv`).
+**Rust now**: ✅ Implemented (commit: feat/rust blocker-1)
 **Instructions**: In `CsvLoader::load`, read `options_manager.get("csv_delimiter", ...)`. Use as the delimiter byte. Requires threading the `OptionsManager` into loaders; either pass it through `LoaderRegistry::load_file` or make it a global (currently `App` owns it).
 
 ---
 
 ### GAP-106 — Options consumed by display formatting
 **Python**: `disp_float_fmt`, `disp_int_fmt`, `disp_date_fmt` are read when formatting cell values.
-**Rust now**: Column display uses hardcoded format strings in `column.rs::display_value`.
+**Rust now**: ✅ Implemented (commit: feat/rust blocker-1)
 **Instructions**: Pass `OptionsManager` reference to `Column::display_value` (or store relevant format strings on `Column`). Read format strings from options instead of hardcoded values.
 
 ---
@@ -522,7 +522,7 @@ Already listed as GAP-049.
 
 ### GAP-135 — External loader: pass options to subprocess
 **Python**: Loader options (e.g., batch size) can be set via the options sheet and are passed to the subprocess.
-**Rust now**: `run_query` always passes `HashMap::new()` for options.
+**Rust now**: ✅ Implemented (commit: feat/rust blocker-1)
 **Instructions**: In `ExtDrill::open_row` and `ExtLoader::load`, populate the options map from the `OptionsManager` using keys prefixed with the loader name (e.g., `vd_duckdb_batch_size`). This requires threading `OptionsManager` into the drill call.
 
 ---
