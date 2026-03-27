@@ -18,6 +18,7 @@ use visidata_core::{
 
 use crate::input::{EditResult, LineEditor};
 use crate::renderer;
+use crate::theme::Theme;
 
 /// What the input line is being used for.
 #[derive(Debug, Clone)]
@@ -60,6 +61,9 @@ pub struct App {
 
     /// Options manager.
     pub options: OptionsManager,
+
+    /// Color theme.
+    pub theme: Theme,
 }
 
 impl App {
@@ -77,6 +81,7 @@ impl App {
             last_search_forward: true,
             commands: builtin_commands(),
             options: visidata_core::options::builtin_options(),
+            theme: Theme::default(),
         }
     }
 
@@ -142,7 +147,7 @@ impl App {
                     Some(format!("command: {query}  → {hint}"))
                 }
             };
-            renderer::draw_sheet(frame, area, sheet, &self.status, input_text.as_deref());
+            renderer::draw_sheet(frame, area, sheet, &self.status, input_text.as_deref(), &self.theme);
         } else {
             let text = Text::raw("No sheets open. Press q to quit.");
             frame.render_widget(text, area);

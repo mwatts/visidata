@@ -4,9 +4,10 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Cell, Row as TuiRow, Table};
 use unicode_width::UnicodeWidthStr;
 
-use visidata_core::Sheet;
+use visidata_core::{Sheet, Value};
 
 use crate::cliptext;
+use crate::theme::{CellContext, Theme};
 
 /// Maximum column width in characters.
 const MAX_COL_WIDTH: u16 = 40;
@@ -21,6 +22,7 @@ pub fn draw_sheet(
     sheet: &Sheet,
     status: &str,
     input_line: Option<&str>,
+    theme: &Theme,
 ) {
     let has_input = input_line.is_some();
     let chunks = if has_input {
@@ -38,22 +40,21 @@ pub fn draw_sheet(
         .split(area)
     };
 
-    draw_table(frame, chunks[0], sheet);
+    draw_table(frame, chunks[0], sheet, theme);
 
     if has_input {
         let input_text = input_line.unwrap_or("");
-        let input_line_widget =
-            Line::from(input_text).style(Style::new().fg(Color::Yellow).on_black());
+        let input_line_widget = Line::from(input_text).style(theme.input_line);
         frame.render_widget(input_line_widget, chunks[1]);
-        draw_status_bar(frame, chunks[2], status);
+        draw_status_bar(frame, chunks[2], status, theme);
     } else {
-        draw_status_bar(frame, chunks[1], status);
+        draw_status_bar(frame, chunks[1], status, theme);
     }
 }
 
 /// Draw the table (header + data rows) with cursor highlighting.
 #[expect(clippy::cast_possible_truncation, reason = "display widths won't exceed u16::MAX")]
-fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet) {
+fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet, theme: &Theme) {
     let visible_cols = sheet.visible_columns();
     if visible_cols.is_empty() {
         return;
@@ -64,12 +65,11 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet) {
         .iter()
         .map(|col| {
             col.width.unwrap_or_else(|| {
-                // Auto-fit: measure header + sample data rows
                 let header_w = UnicodeWidthStr::width(col.name.as_str()) as u16;
                 let max_data_w = sheet
                     .rows
                     .iter()
-                    .take(100) // sample first 100 rows
+                    .take(100)
                     .map(|row| {
                         let display = col.display_value(row);
                         cliptext::dispwidth(&display) as u16
@@ -91,20 +91,14 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet) {
         .iter()
         .enumerate()
         .map(|(vi, col)| {
-            let style = if col.is_key {
-                Style::new().bold().underlined()
-            } else if vi == sheet.cursor_col {
-                Style::new().bold().reversed()
-            } else {
-                Style::new().bold()
-            };
+            let style = theme.header_style(col.is_key, vi == sheet.cursor_col);
             Cell::new(col.name.clone()).style(style)
         })
         .collect();
-    let header = TuiRow::new(header_cells).style(Style::new().on_dark_gray());
+    let header = TuiRow::new(header_cells);
 
     // Calculate visible row range
-    let table_height = area.height.saturating_sub(3) as usize; // borders + header
+    let table_height = area.height.saturating_sub(3) as usize;
     let top_row = if sheet.cursor_row >= sheet.top_row + table_height {
         sheet.cursor_row.saturating_sub(table_height - 1)
     } else if sheet.cursor_row < sheet.top_row {
@@ -125,22 +119,22 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet) {
                 .iter()
                 .enumerate()
                 .map(|(vi, col)| {
+                    let raw_value = col.raw_value(row);
                     let display = col.display_value(row);
                     let (clipped, _) =
                         cliptext::clipstr(&display, Some(col_widths[vi] as usize), "…");
 
                     let is_cursor_row = row_idx == sheet.cursor_row;
-                    let is_cursor_cell = is_cursor_row && vi == sheet.cursor_col;
-
-                    let style = if is_cursor_cell {
-                        Style::new().reversed()
-                    } else if is_cursor_row {
-                        Style::new().on_black().fg(Color::White)
-                    } else if row.selected {
-                        Style::new().fg(Color::Cyan)
-                    } else {
-                        Style::default()
+                    let ctx = CellContext {
+                        is_cursor_cell: is_cursor_row && vi == sheet.cursor_col,
+                        is_cursor_row,
+                        is_selected: row.selected,
+                        is_key_col: col.is_key,
+                        is_null: raw_value.is_null(),
+                        is_error: raw_value.is_error(),
+                        is_numeric: matches!(raw_value, Value::Int(_) | Value::Float(_)),
                     };
+                    let style = theme.cell_style(&ctx);
 
                     Cell::new(clipped).style(style)
                 })
@@ -159,7 +153,7 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, sheet: &Sheet) {
 }
 
 /// Draw the status bar at the bottom of the screen.
-fn draw_status_bar(frame: &mut Frame<'_>, area: Rect, status: &str) {
-    let status_line = Line::from(status).style(Style::new().on_dark_gray().fg(Color::White));
+fn draw_status_bar(frame: &mut Frame<'_>, area: Rect, status: &str, theme: &Theme) {
+    let status_line = Line::from(status).style(theme.status_bar);
     frame.render_widget(status_line, area);
 }
